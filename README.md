@@ -83,7 +83,8 @@ make delete
 | `AmiId` | - | AL2023 の SSM Public Parameter | 上書き可 |
 | `KeyPairName` | - | `""` | SSH 用 KeyPair（任意） |
 | `AllowedSshCidr` | - | `""` | SSH 許可 CIDR（任意、新規 SG 作成時のみ有効） |
-| `CacheBucketName` | - | `""` | Runner 分散キャッシュ用 S3 バケット名。指定時のみ S3 ポリシー付与 |
+| `CacheBucketName` | - | `""` | Runner 分散キャッシュを有効化する S3 バケット名 |
+| `CacheBucketLocation` | - | スタックと同じリージョン | `CacheBucketName` のリージョン。別リージョンの S3 バケットを使う場合に指定 |
 
 ## `AssignPublicIp` の挙動
 
@@ -134,7 +135,7 @@ make delete
 ```
 
 - `EcrPullRepositoryArns` は Runner EC2 ロールに `ecr:GetAuthorizationToken` と対象 repository の pull 権限を付与する
-- `EcrDockerRegistries` を指定すると、`gitlab-runner` ユーザーに `amazon-ecr-credential-helper` を設定する
+- `EcrDockerRegistries` を指定すると、指定した registry host ごとに `credHelpers` を設定する
 - `image:` で指定するイメージは、上記 registry / repository に一致している必要がある
 
 `.gitlab-ci.yml` の例:
@@ -168,6 +169,20 @@ build:
 - AWS 側で GitLab OIDC provider を作成済み
 - push 用 IAM Role の trust policy で対象 GitLab project / branch / tag 条件を制限済み
 - push 用 IAM Role に `ecr:InitiateLayerUpload` などの push 権限を付与済み
+
+## S3 分散キャッシュを使う
+
+`CacheBucketName` を指定すると、Runner 登録時に S3 distributed cache を有効化する。認証は EC2 インスタンスロールを使う。
+
+```json
+{ "ParameterKey": "CacheBucketName",     "ParameterValue": "my-runner-cache" },
+{ "ParameterKey": "CacheBucketLocation", "ParameterValue": "ap-northeast-1" }
+```
+
+- `CacheBucketLocation` を省略した場合はスタックのリージョンを使う
+- 別リージョンの S3 バケットを使う場合は `CacheBucketLocation` を明示する
+- cache の prefix は `gitlab-runner` 固定
+- バケット側には Runner ロールに対する `s3:GetObject` / `s3:PutObject` / `s3:DeleteObject` / `s3:ListBucket` が必要
 
 `.gitlab-ci.yml` の最小例:
 

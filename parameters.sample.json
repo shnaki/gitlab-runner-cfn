@@ -1,9 +1,7 @@
 [
-  { "ParameterKey": "CreateVpc",                 "ParameterValue": "No" },
   { "ParameterKey": "VpcId",                     "ParameterValue": "vpc-xxxxxxxxxxxxxxxxx" },
   { "ParameterKey": "SubnetId",                  "ParameterValue": "subnet-xxxxxxxxxxxxxxxxx" },
-  { "ParameterKey": "NewVpcCidr",                "ParameterValue": "10.0.0.0/16" },
-  { "ParameterKey": "NewSubnetCidr",             "ParameterValue": "10.0.1.0/24" },
+  { "ParameterKey": "AssignPublicIp",            "ParameterValue": "No" },
 
   { "ParameterKey": "ExistingSecurityGroupIds",  "ParameterValue": "" },
 

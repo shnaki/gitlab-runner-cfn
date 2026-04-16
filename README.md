@@ -2,39 +2,48 @@
 
 セルフホスト GitLab に接続する **GitLab Runner (Docker executor)** を、AWS 上で **Spot EC2 1 台** として立ち上げる CloudFormation テンプレート。
 
+**前提環境**: 既存 VPC（通常は NAT Gateway を持つプライベートサブネット）へのデプロイに特化。
+
 ## 構成
 
 ```
                  ┌──────────────────────────────────────┐
-                 │             (your VPC or new)        │
+                 │           your existing VPC          │
                  │                                      │
-  self-hosted    │   ┌────────────────────────────┐     │
-  GitLab  ◄──────┼───┤  EC2 (Spot, AL2023)        │     │
-                 │   │   - docker                 │     │
-                 │   │   - gitlab-runner          │     │
-                 │   │   - IAM: SSM + optional S3 │     │
-                 │   └────────────────────────────┘     │
-                 │                                      │
+                 │   ┌── private subnet ─────────┐      │
+  self-hosted    │   │                           │      │
+  GitLab  ◄──────┼───┤  EC2 (Spot, AL2023)       │      │
+                 │   │   - docker                │      │
+                 │   │   - gitlab-runner         │      │
+                 │   │   - IAM: SSM + opt S3     │      │
+                 │   └───────────┬───────────────┘      │
+                 │               │ outbound             │
+                 │               ▼                      │
+                 │          NAT Gateway ──► Internet    │
+                 │     (DockerHub / packages / ssm)     │
                  └──────────────────────────────────────┘
 ```
 
 - EC2 は常時 1 台（Spot）。中断されると ASG なしのため再作成は手動（または `make delete` → `make deploy`）。
-- VPC / Subnet は **既存利用** と **新規作成** を切替可能（`CreateVpc`）。
-- Security Group も **既存利用** と **新規作成** を切替可能。セルフホスト GitLab 側で固定 SG をホワイトリスト登録しているケースでは、Runner スタックを作り直しても SG ID が変わらないように **外部管理の SG を渡す** 運用を推奨。
+- **VPC / Subnet は既存を渡す前提**。NAT Gateway 経由で outbound を通す private subnet を想定。
+- Security Group は **既存利用** と **新規作成** を切替可能。セルフホスト GitLab 側で固定 SG をホワイトリスト登録しているケースでは、Runner スタックを作り直しても SG ID が変わらないように **外部管理の SG を渡す** 運用を推奨。
+- Public IP の付与は `AssignPublicIp` で制御（デフォルト `No`）。
 - EC2 には SSM Session Manager でアクセス（`AmazonSSMManagedInstanceCore`）。SSH は任意。
 
 ## 前提条件
 
 - AWS CLI v2、`jq`、`make`
-- CloudFormation / EC2 / IAM / (任意で VPC) の権限
+- CloudFormation / EC2 / IAM の権限
 - セルフホスト GitLab で取得済みの Runner **Registration Token**
-- 既存 VPC/Subnet を使う場合、そのサブネットが Public（または NAT 越しでインターネット到達可）で、GitLab サーバに到達できること
+- Runner を置くサブネットから下記への到達性:
+  - GitLab サーバ（VPC 内 / Peering / TGW / DX など）
+  - NAT Gateway または VPC Endpoint 経由でインターネット（`dnf`, Docker Hub, `packages.gitlab.com`, `cfn-signal`, SSM エンドポイント）
 
 ## クイックスタート
 
 ```bash
 cp parameters.sample.json parameters.json
-# parameters.json を編集（GitLabUrl / RegistrationToken / VpcId / SubnetId など）
+# parameters.json を編集（VpcId / SubnetId / GitLabUrl / RegistrationToken など）
 
 make validate
 make deploy
@@ -52,12 +61,10 @@ make delete
 
 | 名前 | 必須 | デフォルト | 説明 |
 |---|---|---|---|
-| `CreateVpc` | - | `No` | `Yes` で VPC/Subnet/IGW を新規作成 |
-| `VpcId` | `CreateVpc=No` 時 | `""` | 既存 VPC ID |
-| `SubnetId` | `CreateVpc=No` 時 | `""` | 既存 Public Subnet ID |
-| `NewVpcCidr` | - | `10.0.0.0/16` | 新規 VPC の CIDR |
-| `NewSubnetCidr` | - | `10.0.1.0/24` | 新規 Subnet の CIDR |
-| `ExistingSecurityGroupIds` | - | `""` | 既存 SG の ID（カンマ区切り）。指定時は新規 SG を作成しない |
+| `VpcId` | ✓ | - | 既存 VPC ID |
+| `SubnetId` | ✓ | - | 既存 Subnet ID（通常は NAT GW route の private subnet） |
+| `AssignPublicIp` | - | `No` | `Yes` / `No` / `SubnetDefault`（下記参照） |
+| `ExistingSecurityGroupIds` | - | `""` | 既存 SG ID（カンマ区切り）。指定時は新規 SG を作成しない |
 | `GitLabUrl` | ✓ | `https://gitlab.example.com/` | セルフホスト GitLab の URL（末尾 `/` 必要） |
 | `RegistrationToken` | ✓ | - | Runner 登録トークン（`NoEcho`） |
 | `RunnerDescription` | - | `cfn-gitlab-runner` | Runner 説明 |
@@ -75,23 +82,15 @@ make delete
 | `AllowedSshCidr` | - | `""` | SSH 許可 CIDR（任意、新規 SG 作成時のみ有効） |
 | `CacheBucketName` | - | `""` | Runner 分散キャッシュ用 S3 バケット名。指定時のみ S3 ポリシー付与 |
 
-## ネットワークモード
+## `AssignPublicIp` の挙動
 
-### A. 既存 VPC を使う（デフォルト）
+| 値 | 動作 | 想定シナリオ |
+|---|---|---|
+| `No`（デフォルト） | ENI に public IP を付与しない | NAT GW 経由で outbound する private subnet。public IPv4 課金も回避 |
+| `Yes` | public IP を強制付与 | IGW 付きの public subnet にデプロイする場合 |
+| `SubnetDefault` | サブネットの `MapPublicIpOnLaunch` に従う | 環境ごとの挙動をサブネット管理者に委ねたい場合 |
 
-```json
-{ "ParameterKey": "CreateVpc", "ParameterValue": "No" },
-{ "ParameterKey": "VpcId",     "ParameterValue": "vpc-abc..." },
-{ "ParameterKey": "SubnetId",  "ParameterValue": "subnet-abc..." }
-```
-
-### B. VPC ごと新規作成
-
-```json
-{ "ParameterKey": "CreateVpc",     "ParameterValue": "Yes" },
-{ "ParameterKey": "NewVpcCidr",    "ParameterValue": "10.0.0.0/16" },
-{ "ParameterKey": "NewSubnetCidr", "ParameterValue": "10.0.1.0/24" }
-```
+**注意**: `No` で IGW のみの public subnet に置くと outbound できずスタック作成が失敗する。NAT GW もしくは VPC Endpoint を確保すること。
 
 ## Security Group モード
 
@@ -142,7 +141,8 @@ sudo cat /etc/gitlab-runner/config.toml
 ```
 
 よくある失敗:
-- **`cfn-signal` タイムアウト**: UserData が 15 分以内に終わらなかった。`/var/log/cloud-init-output.log` と `/var/log/user-data.log` を確認。
+- **`cfn-signal` タイムアウト**: UserData が 15 分以内に終わらなかった。`/var/log/cloud-init-output.log` と `/var/log/user-data.log` を確認。outbound 不通が典型原因。
+- **outbound できない**: サブネットに NAT GW ルートがあるか、SG egress が `0.0.0.0/0` allow か、`AssignPublicIp` の設定がサブネット種別と整合しているかを確認。
 - **GitLab 側に Runner が現れない**: `GitLabUrl` 末尾 `/`、トークン、ネットワーク到達性（SG / ルーティング）を確認。
 - **docker ジョブが権限エラー**: DinD を使うなら `RunnerPrivileged=true`。
 

@@ -1,38 +1,34 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   GitLab Runner (Docker executor) on a single Spot EC2 instance.
-  Supports both existing and newly-created VPC, and both existing and newly-created Security Group.
+  Targets an existing VPC/Subnet (expected to be private with a NAT Gateway).
+  Security Group can be either created here or reused from outside.
 
 # ---------------------------------------------------------------------------
 # Parameters
 # ---------------------------------------------------------------------------
 Parameters:
-  # --- Network ---
-  CreateVpc:
-    Type: String
-    AllowedValues: ["Yes", "No"]
-    Default: "No"
-    Description: "Create a new VPC/Subnet/IGW? If No, supply VpcId and SubnetId."
-
+  # --- Network (existing VPC required) ---
   VpcId:
-    Type: String
-    Default: ""
-    Description: "Existing VPC ID (required when CreateVpc=No)."
+    Type: AWS::EC2::VPC::Id
+    Description: "Existing VPC ID to deploy the runner into."
 
   SubnetId:
-    Type: String
-    Default: ""
-    Description: "Existing public Subnet ID (required when CreateVpc=No)."
+    Type: AWS::EC2::Subnet::Id
+    Description: >
+      Existing Subnet ID. Normally a private subnet with NAT Gateway route
+      for outbound to GitLab / package repos / Docker Hub.
 
-  NewVpcCidr:
+  AssignPublicIp:
     Type: String
-    Default: "10.0.0.0/16"
-    Description: "CIDR for the new VPC (used only when CreateVpc=Yes)."
-
-  NewSubnetCidr:
-    Type: String
-    Default: "10.0.1.0/24"
-    Description: "CIDR for the new public Subnet (used only when CreateVpc=Yes)."
+    AllowedValues: ["Yes", "No", "SubnetDefault"]
+    Default: "No"
+    Description: >
+      Whether to associate a public IPv4 address to the runner ENI.
+      - No (default): never assign a public IP. Requires the subnet to have
+        an alternative egress path (NAT Gateway / VPC endpoints).
+      - Yes: force-assign a public IP (subnet must have IGW route).
+      - SubnetDefault: defer to the subnet's MapPublicIpOnLaunch setting.
 
   # --- Security Group ---
   ExistingSecurityGroupIds:
@@ -40,9 +36,9 @@ Parameters:
     Default: ""
     Description: >
       Comma-separated existing Security Group IDs to attach to the runner.
-      When provided, a new SG is NOT created (useful when the internal GitLab
-      server has allowlisted a specific SG ID that you don't want to rotate).
-      Leave empty to have this stack create its own SG.
+      When provided, a new SG is NOT created (useful when the self-hosted
+      GitLab server has allowlisted a specific SG ID that you don't want to
+      rotate). Leave empty to have this stack create its own SG.
 
   # --- GitLab Runner ---
   GitLabUrl:
@@ -147,7 +143,7 @@ Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label: { default: "Network" }
-        Parameters: [CreateVpc, VpcId, SubnetId, NewVpcCidr, NewSubnetCidr]
+        Parameters: [VpcId, SubnetId, AssignPublicIp]
       - Label: { default: "Security Group" }
         Parameters: [ExistingSecurityGroupIds]
       - Label: { default: "GitLab Runner" }
@@ -172,8 +168,6 @@ Metadata:
 # Conditions
 # ---------------------------------------------------------------------------
 Conditions:
-  ShouldCreateVpc: !Equals [!Ref CreateVpc, "Yes"]
-
   # CommaDelimitedList cannot be compared directly; join and compare to "".
   ShouldCreateSecurityGroup:
     !Equals [!Join ["", !Ref ExistingSecurityGroupIds], ""]
@@ -187,81 +181,22 @@ Conditions:
   HasSpotMaxPrice: !Not [!Equals [!Ref SpotMaxPrice, ""]]
   UseKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
 
+  # AssignPublicIp mode switches
+  UseSubnetDefault: !Equals [!Ref AssignPublicIp, "SubnetDefault"]
+  AssignPublicIpExplicit: !Not [!Equals [!Ref AssignPublicIp, "SubnetDefault"]]
+  AssignPublicIpYes: !Equals [!Ref AssignPublicIp, "Yes"]
+
 # ---------------------------------------------------------------------------
 # Resources
 # ---------------------------------------------------------------------------
 Resources:
-  # --- New VPC (conditional) ---
-  Vpc:
-    Type: AWS::EC2::VPC
-    Condition: ShouldCreateVpc
-    Properties:
-      CidrBlock: !Ref NewVpcCidr
-      EnableDnsHostnames: true
-      EnableDnsSupport: true
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-vpc"
-
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-    Condition: ShouldCreateVpc
-    Properties:
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-igw"
-
-  VpcGatewayAttachment:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Condition: ShouldCreateVpc
-    Properties:
-      VpcId: !Ref Vpc
-      InternetGatewayId: !Ref InternetGateway
-
-  PublicSubnet:
-    Type: AWS::EC2::Subnet
-    Condition: ShouldCreateVpc
-    Properties:
-      VpcId: !Ref Vpc
-      CidrBlock: !Ref NewSubnetCidr
-      AvailabilityZone: !Select [0, !GetAZs ""]
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-public-subnet"
-
-  PublicRouteTable:
-    Type: AWS::EC2::RouteTable
-    Condition: ShouldCreateVpc
-    Properties:
-      VpcId: !Ref Vpc
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-public-rt"
-
-  PublicRoute:
-    Type: AWS::EC2::Route
-    Condition: ShouldCreateVpc
-    DependsOn: VpcGatewayAttachment
-    Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
-
-  PublicSubnetRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Condition: ShouldCreateVpc
-    Properties:
-      RouteTableId: !Ref PublicRouteTable
-      SubnetId: !Ref PublicSubnet
-
   # --- Security Group (conditional) ---
   RunnerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Condition: ShouldCreateSecurityGroup
     Properties:
       GroupDescription: !Sub "${AWS::StackName} GitLab Runner SG"
-      VpcId: !If [ShouldCreateVpc, !Ref Vpc, !Ref VpcId]
+      VpcId: !Ref VpcId
       SecurityGroupEgress:
         - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
@@ -344,14 +279,30 @@ Resources:
           SpotOptions:
             SpotInstanceType: one-time
             MaxPrice: !If [HasSpotMaxPrice, !Ref SpotMaxPrice, !Ref AWS::NoValue]
-        NetworkInterfaces:
-          - DeviceIndex: 0
-            AssociatePublicIpAddress: true
-            SubnetId: !If [ShouldCreateVpc, !Ref PublicSubnet, !Ref SubnetId]
-            Groups: !If
-              - ShouldCreateSecurityGroup
-              - [!Ref RunnerSecurityGroup]
-              - !Ref ExistingSecurityGroupIds
+
+        # When AssignPublicIp=SubnetDefault, use top-level SubnetId + SecurityGroupIds
+        # so the subnet's MapPublicIpOnLaunch takes effect.
+        SubnetId: !If [UseSubnetDefault, !Ref SubnetId, !Ref AWS::NoValue]
+        SecurityGroupIds: !If
+          - UseSubnetDefault
+          - !If
+            - ShouldCreateSecurityGroup
+            - [!Ref RunnerSecurityGroup]
+            - !Ref ExistingSecurityGroupIds
+          - !Ref AWS::NoValue
+
+        # When AssignPublicIp=Yes/No, use NetworkInterfaces to explicitly control.
+        NetworkInterfaces: !If
+          - AssignPublicIpExplicit
+          - - DeviceIndex: 0
+              AssociatePublicIpAddress: !If [AssignPublicIpYes, true, false]
+              SubnetId: !Ref SubnetId
+              Groups: !If
+                - ShouldCreateSecurityGroup
+                - [!Ref RunnerSecurityGroup]
+                - !Ref ExistingSecurityGroupIds
+          - !Ref AWS::NoValue
+
         TagSpecifications:
           - ResourceType: instance
             Tags:
@@ -429,17 +380,17 @@ Outputs:
     Description: "EC2 instance ID"
     Value: !Ref RunnerInstance
 
-  PublicIp:
-    Description: "Public IPv4 of the runner (may change if spot is replaced)"
-    Value: !GetAtt RunnerInstance.PublicIp
+  PrivateIp:
+    Description: "Private IPv4 of the runner"
+    Value: !GetAtt RunnerInstance.PrivateIp
 
   VpcIdUsed:
-    Description: "VPC actually used by the runner"
-    Value: !If [ShouldCreateVpc, !Ref Vpc, !Ref VpcId]
+    Description: "VPC used by the runner"
+    Value: !Ref VpcId
 
   SubnetIdUsed:
-    Description: "Subnet actually used by the runner"
-    Value: !If [ShouldCreateVpc, !Ref PublicSubnet, !Ref SubnetId]
+    Description: "Subnet used by the runner"
+    Value: !Ref SubnetId
 
   SecurityGroupIds:
     Description: "Security Group IDs attached to the runner"

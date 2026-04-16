@@ -1,0 +1,501 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  既存の VPC/Subnet に、単一の Spot EC2 インスタンスとして
+  GitLab Runner (Docker executor) を構築します。
+  Security Group はこのテンプレートで作成するか、既存のものを再利用できます。
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  # --- Network (existing VPC required) ---
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: "Runner を配置する既存 VPC の ID。"
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: >
+      既存 Subnet の ID。通常は GitLab、パッケージリポジトリ、
+      Docker Hub へ outbound できる NAT Gateway 付き private subnet を指定します。
+
+  AssignPublicIp:
+    Type: String
+    AllowedValues: ["Yes", "No", "SubnetDefault"]
+    Default: "No"
+    Description: >
+      Runner の ENI に public IPv4 を関連付けるかを指定します。
+      - No (デフォルト): public IP を付与しません。別の outbound 経路
+        (NAT Gateway / VPC Endpoint) が必要です。
+      - Yes: public IP を強制的に付与します。subnet に IGW への経路が必要です。
+      - SubnetDefault: subnet の MapPublicIpOnLaunch 設定に従います。
+
+  # --- Security Group ---
+  ExistingSecurityGroupIds:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >
+      Runner に付与する既存 Security Group ID をカンマ区切りで指定します。
+      指定した場合は新しい SG を作成しません。空の場合はこのスタックで SG を作成します。
+
+  # --- GitLab Runner ---
+  GitLabUrl:
+    Type: String
+    Default: "https://gitlab.example.com/"
+    Description: "セルフホスト GitLab の URL。末尾は / で終える必要があります。"
+
+  RegistrationToken:
+    Type: String
+    NoEcho: true
+    MinLength: 1
+    Description: "GitLab UI で取得した Runner 登録トークン。"
+
+  RunnerDescription:
+    Type: String
+    Default: "cfn-gitlab-runner"
+    Description: "GitLab の Runners 画面に表示される説明。"
+
+  RunnerTags:
+    Type: String
+    Default: "aws,docker"
+    Description: "この Runner に付与するタグ一覧。カンマ区切りで指定します。"
+
+  RunnerConcurrent:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    Description: "この Runner プロセスで同時実行できるジョブ数の上限。"
+
+  RunnerDefaultDockerImage:
+    Type: String
+    Default: "alpine:latest"
+    Description: ".gitlab-ci.yml で未指定時に使うデフォルトの Docker イメージ。"
+
+  EcrPullRepositoryArns:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >
+      Runner に pull を許可する ECR repository ARN。カンマ区切りで指定します。
+      空の場合は private ECR の pull 権限を付与しません。
+
+  EcrDockerRegistries:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >
+      Docker credential helper を設定する ECR registry host。カンマ区切りで指定します。
+      例: 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com
+      空の場合は docker credential helper を設定しません。
+
+  RunnerPrivileged:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: "コンテナを privileged モードで実行します。DinD 利用時に必要です。"
+
+  RunnerLocked:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: "Runner を現在のプロジェクトにロックします。"
+
+  RunnerRunUntagged:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: "タグなしジョブの実行を許可します。"
+
+  # --- Compute ---
+  InstanceType:
+    Type: String
+    Default: "t3.small"
+    AllowedValues:
+      - t3.nano
+      - t3.micro
+      - t3.small
+      - t3.medium
+      - t3.large
+      - m6i.large
+    Description: "Runner に使用する EC2 インスタンスタイプ。"
+
+  SpotMaxPrice:
+    Type: String
+    Default: ""
+    Description: "Spot の上限価格 (USD/時間)。空の場合はオンデマンド価格が上限です。"
+
+  VolumeSizeGiB:
+    Type: Number
+    Default: 50
+    MinValue: 8
+    Description: "ルート EBS ボリュームのサイズ (GiB)。"
+
+  AmiId:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+    Description: "最新の AL2023 AMI を解決する SSM Public Parameter。"
+
+  # --- Access ---
+  KeyPairName:
+    Type: String
+    Default: ""
+    Description: "任意の SSH 用 EC2 KeyPair 名。空の場合は SSM のみで接続します。"
+
+  AllowedSshCidr:
+    Type: String
+    Default: ""
+    Description: >
+      SSH を許可する CIDR (例: 203.0.113.0/32)。
+      ExistingSecurityGroupIds を指定した場合は無視されます。空の場合は SSH ingress を無効化します。
+
+  # --- Storage / cache ---
+  CacheBucketName:
+    Type: String
+    Default: ""
+    Description: "Runner の分散キャッシュに使う既存 S3 バケット名。空の場合は S3 ポリシーを付与しません。"
+
+  CacheBucketLocation:
+    Type: String
+    Default: ""
+    Description: >
+      CacheBucketName の AWS リージョン。空の場合はスタックのリージョンを使います。
+      CacheBucketName が空の場合は無視されます。
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: "Network" }
+        Parameters: [VpcId, SubnetId, AssignPublicIp]
+      - Label: { default: "Security Group" }
+        Parameters: [ExistingSecurityGroupIds]
+      - Label: { default: "GitLab Runner" }
+        Parameters:
+          - GitLabUrl
+          - RegistrationToken
+          - RunnerDescription
+          - RunnerTags
+          - RunnerConcurrent
+          - RunnerDefaultDockerImage
+          - EcrPullRepositoryArns
+          - EcrDockerRegistries
+          - RunnerPrivileged
+          - RunnerLocked
+          - RunnerRunUntagged
+      - Label: { default: "Compute" }
+        Parameters: [InstanceType, SpotMaxPrice, VolumeSizeGiB, AmiId]
+      - Label: { default: "Access" }
+        Parameters: [KeyPairName, AllowedSshCidr]
+      - Label: { default: "Cache" }
+        Parameters: [CacheBucketName, CacheBucketLocation]
+
+# ---------------------------------------------------------------------------
+# Conditions
+# ---------------------------------------------------------------------------
+Conditions:
+  # CommaDelimitedList cannot be compared directly; join and compare to "".
+  ShouldCreateSecurityGroup:
+    !Equals [!Join ["", !Ref ExistingSecurityGroupIds], ""]
+
+  EnableSsh: !And
+    - !Equals [!Join ["", !Ref ExistingSecurityGroupIds], ""]
+    - !Not [!Equals [!Ref KeyPairName, ""]]
+    - !Not [!Equals [!Ref AllowedSshCidr, ""]]
+
+  HasCacheBucket: !Not [!Equals [!Ref CacheBucketName, ""]]
+  HasCacheBucketLocation: !Not [!Equals [!Ref CacheBucketLocation, ""]]
+  HasEcrPullRepositories: !Not [!Equals [!Join ["", !Ref EcrPullRepositoryArns], ""]]
+  HasEcrDockerRegistries: !Not [!Equals [!Join ["", !Ref EcrDockerRegistries], ""]]
+  HasSpotMaxPrice: !Not [!Equals [!Ref SpotMaxPrice, ""]]
+  UseKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
+
+  # AssignPublicIp mode switches
+  UseSubnetDefault: !Equals [!Ref AssignPublicIp, "SubnetDefault"]
+  AssignPublicIpExplicit: !Not [!Equals [!Ref AssignPublicIp, "SubnetDefault"]]
+  AssignPublicIpYes: !Equals [!Ref AssignPublicIp, "Yes"]
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+  # --- Security Group (conditional) ---
+  RunnerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: ShouldCreateSecurityGroup
+    Properties:
+      GroupDescription: !Sub "${AWS::StackName} GitLab Runner SG"
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: "すべての outbound 通信を許可"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-sg"
+
+  RunnerSshIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: EnableSsh
+    Properties:
+      GroupId: !Ref RunnerSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref AllowedSshCidr
+      Description: "指定した CIDR からの SSH を許可"
+
+  # --- IAM ---
+  RunnerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - !If
+          - HasCacheBucket
+          - PolicyName: runner-cache-bucket
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                    - s3:PutObject
+                    - s3:DeleteObject
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${CacheBucketName}/*"
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                    - s3:GetBucketLocation
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${CacheBucketName}"
+          - !Ref AWS::NoValue
+        - !If
+          - HasEcrPullRepositories
+          - PolicyName: runner-ecr-pull
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ecr:GetAuthorizationToken
+                  Resource: "*"
+                - Effect: Allow
+                  Action:
+                    - ecr:BatchCheckLayerAvailability
+                    - ecr:BatchGetImage
+                    - ecr:GetDownloadUrlForLayer
+                  Resource: !Ref EcrPullRepositoryArns
+          - !Ref AWS::NoValue
+
+  RunnerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref RunnerRole]
+
+  # --- Launch Template ---
+  RunnerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-lt"
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt RunnerInstanceProfile.Arn
+        KeyName: !If [UseKeyPair, !Ref KeyPairName, !Ref AWS::NoValue]
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: !Ref VolumeSizeGiB
+              VolumeType: gp3
+              DeleteOnTermination: true
+              Encrypted: true
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            SpotInstanceType: one-time
+            MaxPrice: !If [HasSpotMaxPrice, !Ref SpotMaxPrice, !Ref AWS::NoValue]
+
+        # When AssignPublicIp=SubnetDefault, use top-level SubnetId + SecurityGroupIds
+        # so the subnet's MapPublicIpOnLaunch takes effect.
+        SubnetId: !If [UseSubnetDefault, !Ref SubnetId, !Ref AWS::NoValue]
+        SecurityGroupIds: !If
+          - UseSubnetDefault
+          - !If
+            - ShouldCreateSecurityGroup
+            - [!Ref RunnerSecurityGroup]
+            - !Ref ExistingSecurityGroupIds
+          - !Ref AWS::NoValue
+
+        # When AssignPublicIp=Yes/No, use NetworkInterfaces to explicitly control.
+        NetworkInterfaces: !If
+          - AssignPublicIpExplicit
+          - - DeviceIndex: 0
+              AssociatePublicIpAddress: !If [AssignPublicIpYes, true, false]
+              SubnetId: !Ref SubnetId
+              Groups: !If
+                - ShouldCreateSecurityGroup
+                - [!Ref RunnerSecurityGroup]
+                - !Ref ExistingSecurityGroupIds
+          - !Ref AWS::NoValue
+
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "${AWS::StackName}-runner"
+          - ResourceType: volume
+            Tags:
+              - Key: Name
+                Value: !Sub "${AWS::StackName}-runner-volume"
+        UserData:
+          Fn::Base64:
+            !Sub
+              - |
+                #!/bin/bash
+                set -euo pipefail
+                exec > >(tee -a /var/log/user-data.log) 2>&1
+
+                cfn_signal() {
+                  local exit_code=$1
+                  echo "[user-data] signaling CloudFormation with exit code $exit_code"
+                  /opt/aws/bin/cfn-signal -e "$exit_code" \
+                    --stack ${AWS::StackName} \
+                    --resource RunnerInstance \
+                    --region ${AWS::Region}
+                }
+                trap 'exit_code=$?; cfn_signal "$exit_code"' EXIT
+
+                echo "[user-data] installing packages"
+                dnf -y update
+                dnf -y install docker aws-cfn-bootstrap jq amazon-ecr-credential-helper
+                systemctl enable --now docker
+
+                echo "[user-data] installing gitlab-runner"
+                curl -fsSL "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.rpm.sh" | bash
+                dnf -y install gitlab-runner
+                usermod -aG docker gitlab-runner
+
+                echo "[user-data] writing base config.toml"
+                install -d -m 0700 /etc/gitlab-runner
+                cat > /etc/gitlab-runner/config.toml <<TOML
+                concurrent = ${RunnerConcurrent}
+                check_interval = 0
+                TOML
+                chmod 0600 /etc/gitlab-runner/config.toml
+
+                echo "[user-data] writing runner registration template"
+                cat > /etc/gitlab-runner/register-template.toml <<TOML
+                [[runners]]
+                  [runners.docker]
+                    image = "${RunnerDefaultDockerImage}"
+                    privileged = ${RunnerPrivileged}
+                    volumes = ["/cache"]
+                TOML
+
+                if [ "${EnableRunnerCache}" = "true" ]; then
+                  cat >> /etc/gitlab-runner/register-template.toml <<TOML
+                  [runners.cache]
+                    Type = "s3"
+                    Path = "gitlab-runner"
+                    Shared = true
+                    [runners.cache.s3]
+                      BucketName = "${CacheBucketName}"
+                      BucketLocation = "${ResolvedCacheBucketLocation}"
+                      AuthenticationType = "iam"
+                  TOML
+                fi
+                chmod 0600 /etc/gitlab-runner/register-template.toml
+
+                if [ "${EnableEcrDockerHelper}" = "true" ]; then
+                  echo "[user-data] configuring docker credential helper for ECR"
+                  install -d -m 0700 -o gitlab-runner -g gitlab-runner /home/gitlab-runner/.docker
+                  REGISTRIES_JSON=$(
+                    printf '%s\n' "${JoinedEcrDockerRegistries}" |
+                      tr ',' '\n' |
+                      sed -e 's/^ *//' -e 's/ *$//' -e '/^$/d' |
+                      jq -R . |
+                      jq -s '{credHelpers: (map({key: ., value: "ecr-login"}) | from_entries)}'
+                  )
+                  printf '%s\n' "$REGISTRIES_JSON" > /home/gitlab-runner/.docker/config.json
+                  chown gitlab-runner:gitlab-runner /home/gitlab-runner/.docker/config.json
+                  chmod 0600 /home/gitlab-runner/.docker/config.json
+                fi
+
+                echo "[user-data] registering runner"
+                gitlab-runner register \
+                  --non-interactive \
+                  --url "${GitLabUrl}" \
+                  --registration-token "${RegistrationToken}" \
+                  --template-config /etc/gitlab-runner/register-template.toml \
+                  --executor "docker" \
+                  --docker-image "${RunnerDefaultDockerImage}" \
+                  --description "${RunnerDescription}" \
+                  --tag-list "${RunnerTags}" \
+                  --locked=${RunnerLocked} \
+                  --run-untagged=${RunnerRunUntagged}
+
+                systemctl enable --now gitlab-runner
+              - EnableEcrDockerHelper: !If [HasEcrDockerRegistries, "true", "false"]
+                EnableRunnerCache: !If [HasCacheBucket, "true", "false"]
+                JoinedEcrDockerRegistries: !If [HasEcrDockerRegistries, !Join [",", !Ref EcrDockerRegistries], ""]
+                ResolvedCacheBucketLocation: !If [HasCacheBucketLocation, !Ref CacheBucketLocation, !Ref AWS::Region]
+
+  # --- EC2 Instance ---
+  RunnerInstance:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT15M
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref RunnerLaunchTemplate
+        Version: !GetAtt RunnerLaunchTemplate.LatestVersionNumber
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-runner"
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+  InstanceId:
+    Description: "EC2 インスタンス ID"
+    Value: !Ref RunnerInstance
+
+  PrivateIp:
+    Description: "Runner の private IPv4 アドレス"
+    Value: !GetAtt RunnerInstance.PrivateIp
+
+  VpcIdUsed:
+    Description: "Runner が使用する VPC"
+    Value: !Ref VpcId
+
+  SubnetIdUsed:
+    Description: "Runner が使用する Subnet"
+    Value: !Ref SubnetId
+
+  SecurityGroupIds:
+    Description: "Runner に付与された Security Group ID"
+    Value: !If
+      - ShouldCreateSecurityGroup
+      - !Ref RunnerSecurityGroup
+      - !Join [",", !Ref ExistingSecurityGroupIds]
+
+  EcrDockerRegistriesConfigured:
+    Description: "Docker credential helper を設定した ECR registry host"
+    Value: !If
+      - HasEcrDockerRegistries
+      - !Join [",", !Ref EcrDockerRegistries]
+      - ""
+
+  SsmSessionCommand:
+    Description: "SSM Session Manager シェルを開くための 1 行コマンド"
+    Value: !Sub "aws ssm start-session --region ${AWS::Region} --target ${RunnerInstance}"

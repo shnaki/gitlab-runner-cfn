@@ -1,0 +1,29 @@
+[
+  { "ParameterKey": "VpcId",                     "ParameterValue": "vpc-xxxxxxxxxxxxxxxxx" },
+  { "ParameterKey": "SubnetId",                  "ParameterValue": "subnet-xxxxxxxxxxxxxxxxx" },
+  { "ParameterKey": "AssignPublicIp",            "ParameterValue": "No" },
+
+  { "ParameterKey": "ExistingSecurityGroupIds",  "ParameterValue": "" },
+
+  { "ParameterKey": "GitLabUrl",                 "ParameterValue": "https://gitlab.example.com/" },
+  { "ParameterKey": "RegistrationToken",         "ParameterValue": "REPLACE_ME" },
+  { "ParameterKey": "RunnerDescription",         "ParameterValue": "cfn-gitlab-runner" },
+  { "ParameterKey": "RunnerTags",                "ParameterValue": "aws,docker" },
+  { "ParameterKey": "RunnerConcurrent",          "ParameterValue": "2" },
+  { "ParameterKey": "RunnerDefaultDockerImage",  "ParameterValue": "alpine:latest" },
+  { "ParameterKey": "EcrPullRepositoryArns",     "ParameterValue": "" },
+  { "ParameterKey": "EcrDockerRegistries",       "ParameterValue": "" },
+  { "ParameterKey": "RunnerPrivileged",          "ParameterValue": "false" },
+  { "ParameterKey": "RunnerLocked",              "ParameterValue": "true" },
+  { "ParameterKey": "RunnerRunUntagged",         "ParameterValue": "false" },
+
+  { "ParameterKey": "InstanceType",              "ParameterValue": "t3.small" },
+  { "ParameterKey": "SpotMaxPrice",              "ParameterValue": "" },
+  { "ParameterKey": "VolumeSizeGiB",             "ParameterValue": "50" },
+
+  { "ParameterKey": "KeyPairName",               "ParameterValue": "" },
+  { "ParameterKey": "AllowedSshCidr",            "ParameterValue": "" },
+
+  { "ParameterKey": "CacheBucketName",           "ParameterValue": "" },
+  { "ParameterKey": "CacheBucketLocation",       "ParameterValue": "" }
+]

@@ -73,6 +73,21 @@ Parameters:
     Default: "alpine:latest"
     Description: "Default docker image when .gitlab-ci.yml does not set one."
 
+  EcrPullRepositoryArns:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >
+      Comma-separated ECR repository ARNs that the runner may pull from.
+      Leave empty to disable private ECR pull permissions.
+
+  EcrDockerRegistries:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >
+      Comma-separated ECR registry hosts to configure for docker credential
+      helper (for example 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com).
+      Leave empty to skip docker credential helper setup.
+
   RunnerPrivileged:
     Type: String
     AllowedValues: ["true", "false"]
@@ -154,6 +169,8 @@ Metadata:
           - RunnerTags
           - RunnerConcurrent
           - RunnerDefaultDockerImage
+          - EcrPullRepositoryArns
+          - EcrDockerRegistries
           - RunnerPrivileged
           - RunnerLocked
           - RunnerRunUntagged
@@ -178,6 +195,8 @@ Conditions:
     - !Not [!Equals [!Ref AllowedSshCidr, ""]]
 
   HasCacheBucket: !Not [!Equals [!Ref CacheBucketName, ""]]
+  HasEcrPullRepositories: !Not [!Equals [!Join ["", !Ref EcrPullRepositoryArns], ""]]
+  HasEcrDockerRegistries: !Not [!Equals [!Join ["", !Ref EcrDockerRegistries], ""]]
   HasSpotMaxPrice: !Not [!Equals [!Ref SpotMaxPrice, ""]]
   UseKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
 
@@ -247,6 +266,23 @@ Resources:
                     - s3:GetBucketLocation
                   Resource: !Sub "arn:${AWS::Partition}:s3:::${CacheBucketName}"
           - !Ref AWS::NoValue
+        - !If
+          - HasEcrPullRepositories
+          - PolicyName: runner-ecr-pull
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ecr:GetAuthorizationToken
+                  Resource: "*"
+                - Effect: Allow
+                  Action:
+                    - ecr:BatchCheckLayerAvailability
+                    - ecr:BatchGetImage
+                    - ecr:GetDownloadUrlForLayer
+                  Resource: !Ref EcrPullRepositoryArns
+          - !Ref AWS::NoValue
 
   RunnerInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -313,49 +349,64 @@ Resources:
               - Key: Name
                 Value: !Sub "${AWS::StackName}-runner-volume"
         UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            set -euo pipefail
-            exec > >(tee -a /var/log/user-data.log) 2>&1
+          Fn::Base64:
+            !Sub
+              - |
+                #!/bin/bash
+                set -euo pipefail
+                exec > >(tee -a /var/log/user-data.log) 2>&1
 
-            echo "[user-data] installing packages"
-            dnf -y update
-            dnf -y install docker aws-cfn-bootstrap jq
-            systemctl enable --now docker
+                echo "[user-data] installing packages"
+                dnf -y update
+                dnf -y install docker aws-cfn-bootstrap jq amazon-ecr-credential-helper
+                systemctl enable --now docker
 
-            echo "[user-data] installing gitlab-runner"
-            curl -fsSL "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.rpm.sh" | bash
-            dnf -y install gitlab-runner
-            usermod -aG docker gitlab-runner
+                echo "[user-data] installing gitlab-runner"
+                curl -fsSL "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.rpm.sh" | bash
+                dnf -y install gitlab-runner
+                usermod -aG docker gitlab-runner
 
-            echo "[user-data] writing base config.toml"
-            install -d -m 0700 /etc/gitlab-runner
-            cat > /etc/gitlab-runner/config.toml <<TOML
-            concurrent = ${RunnerConcurrent}
-            check_interval = 0
-            TOML
-            chmod 0600 /etc/gitlab-runner/config.toml
+                echo "[user-data] writing base config.toml"
+                install -d -m 0700 /etc/gitlab-runner
+                cat > /etc/gitlab-runner/config.toml <<TOML
+                concurrent = ${RunnerConcurrent}
+                check_interval = 0
+                TOML
+                chmod 0600 /etc/gitlab-runner/config.toml
 
-            echo "[user-data] registering runner"
-            gitlab-runner register \
-              --non-interactive \
-              --url "${GitLabUrl}" \
-              --registration-token "${RegistrationToken}" \
-              --executor "docker" \
-              --docker-image "${RunnerDefaultDockerImage}" \
-              --docker-privileged=${RunnerPrivileged} \
-              --description "${RunnerDescription}" \
-              --tag-list "${RunnerTags}" \
-              --locked=${RunnerLocked} \
-              --run-untagged=${RunnerRunUntagged}
+                if [ "${EnableEcrDockerHelper}" = "true" ]; then
+                  echo "[user-data] configuring docker credential helper for ECR"
+                  install -d -m 0700 -o gitlab-runner -g gitlab-runner /home/gitlab-runner/.docker
+                  cat > /home/gitlab-runner/.docker/config.json <<'JSON'
+                  {
+                    "credsStore": "ecr-login"
+                  }
+                  JSON
+                  chown gitlab-runner:gitlab-runner /home/gitlab-runner/.docker/config.json
+                  chmod 0600 /home/gitlab-runner/.docker/config.json
+                fi
 
-            systemctl enable --now gitlab-runner
+                echo "[user-data] registering runner"
+                gitlab-runner register \
+                  --non-interactive \
+                  --url "${GitLabUrl}" \
+                  --registration-token "${RegistrationToken}" \
+                  --executor "docker" \
+                  --docker-image "${RunnerDefaultDockerImage}" \
+                  --docker-privileged=${RunnerPrivileged} \
+                  --description "${RunnerDescription}" \
+                  --tag-list "${RunnerTags}" \
+                  --locked=${RunnerLocked} \
+                  --run-untagged=${RunnerRunUntagged}
 
-            echo "[user-data] signaling CloudFormation"
-            /opt/aws/bin/cfn-signal -e $? \
-              --stack ${AWS::StackName} \
-              --resource RunnerInstance \
-              --region ${AWS::Region}
+                systemctl enable --now gitlab-runner
+
+                echo "[user-data] signaling CloudFormation"
+                /opt/aws/bin/cfn-signal -e $? \
+                  --stack ${AWS::StackName} \
+                  --resource RunnerInstance \
+                  --region ${AWS::Region}
+              - EnableEcrDockerHelper: !If [HasEcrDockerRegistries, "true", "false"]
 
   # --- EC2 Instance ---
   RunnerInstance:
@@ -398,6 +449,13 @@ Outputs:
       - ShouldCreateSecurityGroup
       - !Ref RunnerSecurityGroup
       - !Join [",", !Ref ExistingSecurityGroupIds]
+
+  EcrDockerRegistriesConfigured:
+    Description: "ECR registry hosts configured for docker credential helper"
+    Value: !If
+      - HasEcrDockerRegistries
+      - !Join [",", !Ref EcrDockerRegistries]
+      - ""
 
   SsmSessionCommand:
     Description: "One-liner to open an SSM Session Manager shell"

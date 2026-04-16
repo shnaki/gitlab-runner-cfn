@@ -2,9 +2,11 @@ STACK_NAME ?= gitlab-runner
 REGION     ?= ap-northeast-1
 TEMPLATE   ?= gitlab-runner.yaml
 PARAMS     ?= parameters.json
+CHANGE_SET ?= $(STACK_NAME)-preview
 
 AWS        ?= aws
 AWSFLAGS    = --region $(REGION)
+BASH       ?= bash
 
 .DEFAULT_GOAL := help
 
@@ -18,21 +20,10 @@ validate: ## Validate the CloudFormation template
 		--template-body file://$(TEMPLATE) $(AWSFLAGS)
 
 deploy: $(PARAMS) ## Deploy or update the stack (uses parameters.json)
-	$(AWS) cloudformation deploy \
-		--stack-name $(STACK_NAME) \
-		--template-file $(TEMPLATE) \
-		--capabilities CAPABILITY_IAM \
-		--parameter-overrides $$(jq -r '.[] | "\(.ParameterKey)=\(.ParameterValue)"' $(PARAMS)) \
-		$(AWSFLAGS)
+	$(BASH) scripts/cfn-deploy.sh deploy $(STACK_NAME) $(REGION) $(TEMPLATE) $(PARAMS)
 
 changeset: $(PARAMS) ## Create a change set without executing (dry-run)
-	$(AWS) cloudformation deploy \
-		--stack-name $(STACK_NAME) \
-		--template-file $(TEMPLATE) \
-		--capabilities CAPABILITY_IAM \
-		--no-execute-changeset \
-		--parameter-overrides $$(jq -r '.[] | "\(.ParameterKey)=\(.ParameterValue)"' $(PARAMS)) \
-		$(AWSFLAGS)
+	$(BASH) scripts/cfn-deploy.sh changeset $(STACK_NAME) $(REGION) $(TEMPLATE) $(PARAMS) $(CHANGE_SET)
 
 delete: ## Delete the stack and wait for completion
 	$(AWS) cloudformation delete-stack --stack-name $(STACK_NAME) $(AWSFLAGS)

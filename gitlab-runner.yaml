@@ -362,6 +362,16 @@ Resources:
                 set -euo pipefail
                 exec > >(tee -a /var/log/user-data.log) 2>&1
 
+                cfn_signal() {
+                  local exit_code=$1
+                  echo "[user-data] signaling CloudFormation with exit code $exit_code"
+                  /opt/aws/bin/cfn-signal -e "$exit_code" \
+                    --stack ${AWS::StackName} \
+                    --resource RunnerInstance \
+                    --region ${AWS::Region}
+                }
+                trap 'exit_code=$?; cfn_signal "$exit_code"' EXIT
+
                 echo "[user-data] installing packages"
                 dnf -y update
                 dnf -y install docker aws-cfn-bootstrap jq amazon-ecr-credential-helper
@@ -381,9 +391,11 @@ Resources:
                 chmod 0600 /etc/gitlab-runner/config.toml
 
                 echo "[user-data] writing runner registration template"
-                cat > /etc/gitlab-runner/register-template.toml <<'TOML'
+                cat > /etc/gitlab-runner/register-template.toml <<TOML
                 [[runners]]
                   [runners.docker]
+                    image = "${RunnerDefaultDockerImage}"
+                    privileged = ${RunnerPrivileged}
                     volumes = ["/cache"]
                 TOML
 
@@ -411,7 +423,7 @@ Resources:
                       jq -R . |
                       jq -s '{credHelpers: (map({key: ., value: "ecr-login"}) | from_entries)}'
                   )
-                  printf '%s\n' "${!REGISTRIES_JSON}" > /home/gitlab-runner/.docker/config.json
+                  printf '%s\n' "$REGISTRIES_JSON" > /home/gitlab-runner/.docker/config.json
                   chown gitlab-runner:gitlab-runner /home/gitlab-runner/.docker/config.json
                   chmod 0600 /home/gitlab-runner/.docker/config.json
                 fi
@@ -424,19 +436,12 @@ Resources:
                   --template-config /etc/gitlab-runner/register-template.toml \
                   --executor "docker" \
                   --docker-image "${RunnerDefaultDockerImage}" \
-                  --docker-privileged=${RunnerPrivileged} \
                   --description "${RunnerDescription}" \
                   --tag-list "${RunnerTags}" \
                   --locked=${RunnerLocked} \
                   --run-untagged=${RunnerRunUntagged}
 
                 systemctl enable --now gitlab-runner
-
-                echo "[user-data] signaling CloudFormation"
-                /opt/aws/bin/cfn-signal -e $? \
-                  --stack ${AWS::StackName} \
-                  --resource RunnerInstance \
-                  --region ${AWS::Region}
               - EnableEcrDockerHelper: !If [HasEcrDockerRegistries, "true", "false"]
                 EnableRunnerCache: !If [HasCacheBucket, "true", "false"]
                 JoinedEcrDockerRegistries: !If [HasEcrDockerRegistries, !Join [",", !Ref EcrDockerRegistries], ""]

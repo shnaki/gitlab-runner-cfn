@@ -248,3 +248,4 @@ sudo cat /etc/gitlab-runner/config.toml
 - `gitlab-runner.yaml` — CloudFormation テンプレート
 - `parameters.sample.json` — パラメータのサンプル（コピーして `parameters.json` に）
 - `Makefile` — `validate` / `deploy` / `changeset` / `outputs` / `session` / `delete`
+- `scripts/cfn-deploy.sh` — JSON パラメータを安全に扱う create/update/change-set ラッパー

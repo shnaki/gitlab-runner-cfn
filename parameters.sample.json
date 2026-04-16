@@ -9,7 +9,7 @@
   { "ParameterKey": "RegistrationToken",         "ParameterValue": "REPLACE_ME" },
   { "ParameterKey": "RunnerDescription",         "ParameterValue": "cfn-gitlab-runner" },
   { "ParameterKey": "RunnerTags",                "ParameterValue": "aws,docker" },
-  { "ParameterKey": "RunnerConcurrent",          "ParameterValue": "4" },
+  { "ParameterKey": "RunnerConcurrent",          "ParameterValue": "2" },
   { "ParameterKey": "RunnerDefaultDockerImage",  "ParameterValue": "alpine:latest" },
   { "ParameterKey": "EcrPullRepositoryArns",     "ParameterValue": "" },
   { "ParameterKey": "EcrDockerRegistries",       "ParameterValue": "" },
@@ -19,7 +19,7 @@
 
   { "ParameterKey": "InstanceType",              "ParameterValue": "t3.small" },
   { "ParameterKey": "SpotMaxPrice",              "ParameterValue": "" },
-  { "ParameterKey": "VolumeSizeGiB",             "ParameterValue": "30" },
+  { "ParameterKey": "VolumeSizeGiB",             "ParameterValue": "50" },
 
   { "ParameterKey": "KeyPairName",               "ParameterValue": "" },
   { "ParameterKey": "AllowedSshCidr",            "ParameterValue": "" },

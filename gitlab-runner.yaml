@@ -64,7 +64,7 @@ Parameters:
 
   RunnerConcurrent:
     Type: Number
-    Default: 4
+    Default: 2
     MinValue: 1
     Description: "Max concurrent jobs for this runner process."
 
@@ -126,7 +126,7 @@ Parameters:
 
   VolumeSizeGiB:
     Type: Number
-    Default: 30
+    Default: 50
     MinValue: 8
     Description: "Root EBS volume size in GiB."
 

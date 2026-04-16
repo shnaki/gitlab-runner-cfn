@@ -70,7 +70,7 @@ make delete
 | `RegistrationToken` | ✓ | - | Runner 登録トークン（`NoEcho`） |
 | `RunnerDescription` | - | `cfn-gitlab-runner` | Runner 説明 |
 | `RunnerTags` | - | `aws,docker` | Runner タグ（カンマ区切り） |
-| `RunnerConcurrent` | - | `4` | 同時実行ジョブ数 |
+| `RunnerConcurrent` | - | `2` | 同時実行ジョブ数 |
 | `RunnerDefaultDockerImage` | - | `alpine:latest` | デフォルト Docker イメージ |
 | `EcrPullRepositoryArns` | - | `""` | pull を許可する ECR repository ARN（カンマ区切り）。空なら ECR pull 権限なし |
 | `EcrDockerRegistries` | - | `""` | Docker credential helper を有効化する ECR registry host（カンマ区切り） |
@@ -79,7 +79,7 @@ make delete
 | `RunnerRunUntagged` | - | `false` | タグなしジョブを受ける |
 | `InstanceType` | - | `t3.small` | `t3.nano` / `t3.micro` / `t3.small` / `t3.medium` / `t3.large` / `m6i.large` |
 | `SpotMaxPrice` | - | `""` | Spot 最大価格 USD/時。空ならオンデマンド価格上限 |
-| `VolumeSizeGiB` | - | `30` | ルート EBS サイズ |
+| `VolumeSizeGiB` | - | `50` | ルート EBS サイズ |
 | `AmiId` | - | AL2023 の SSM Public Parameter | 上書き可 |
 | `KeyPairName` | - | `""` | SSH 用 KeyPair（任意） |
 | `AllowedSshCidr` | - | `""` | SSH 許可 CIDR（任意、新規 SG 作成時のみ有効） |

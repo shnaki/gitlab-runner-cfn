@@ -83,14 +83,14 @@ cp parameters-iam.sample.json parameters-iam.json
 
 make validate-iam
 make deploy-iam
-make outputs-iam  # RunnerInstanceProfileArn を控えておく
+make outputs-iam
 ```
 
 ### ステップ 2: メインスタックをデプロイ
 
 ```bash
 cp parameters.sample.json parameters.json
-# parameters.json を編集（VpcId / SubnetId / GitLabUrl / RegistrationToken / RunnerInstanceProfileArn など）
+# parameters.json を編集（VpcId / SubnetId / GitLabUrl / RegistrationToken / IamStackName など）
 # 初回は RunnerStateVolumeId を空のままにしてよい。make outputs の RunnerStateVolumeIdUsed を控えておくと再利用できる。
 
 make validate
@@ -149,7 +149,7 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | `RunnerStateVolumeSizeGiB` | - | `20` | `RunnerStateVolumeId` が空のときに作成する state volume のサイズ |
 | `RunnerStateVolumeAvailabilityZone` | - | `""` | 新規 state volume の AZ。通常は `make deploy` / `make changeset` が `SubnetId` から自動補完する |
 | `AmiId` | - | AL2023 の SSM Public Parameter | 上書き可 |
-| `RunnerInstanceProfileArn` | ✓ | - | IAM スタック (`make outputs-iam`) で確認した `RunnerInstanceProfileArn` |
+| `IamStackName` | - | `gitlab-runner-iam` | `RunnerInstanceProfileArn` と `CacheBucketName` を export している IAM スタック名 |
 | `KeyPairName` | - | `""` | SSH 用 KeyPair（任意） |
 | `AllowedSshCidr` | - | `""` | SSH 許可 CIDR（任意、新規 SG 作成時のみ有効） |
 | `CloudWatchLogsRetentionDays` | - | `30` | CloudWatch Logs の保持日数 |
@@ -249,7 +249,7 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 
 ## S3 分散キャッシュを使う
 
-`CacheBucketName` を両スタックに指定すると、Runner 登録時に S3 distributed cache を有効化する。認証は EC2 インスタンスロールを使う。
+IAM スタックの `CacheBucketName` を指定すると、Runner 登録時に S3 distributed cache を有効化できる。認証は EC2 インスタンスロールを使う。
 
 `parameters-iam.json`:
 
@@ -260,15 +260,18 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 `parameters.json`:
 
 ```json
-{ "ParameterKey": "CacheBucketName",     "ParameterValue": "my-runner-cache" },
+{ "ParameterKey": "IamStackName",        "ParameterValue": "gitlab-runner-iam" },
 { "ParameterKey": "CacheBucketLocation", "ParameterValue": "ap-northeast-1" }
 ```
 
-- IAM スタックの `CacheBucketName` は S3 権限付与に使用する
-- メインスタックの `CacheBucketName` / `CacheBucketLocation` は `config.toml` の cache 設定に使用する
+- メインスタックの `CacheBucketName` が空なら、IAM スタックが export した `CacheBucketName` を自動利用する
+- メインスタックで `CacheBucketName` を明示すると、その値が IAM export より優先される
+- IAM スタックの `CacheBucketName` は S3 権限付与にも使用する
 - `CacheBucketLocation` を省略した場合はスタックのリージョンを使う
 - cache の prefix は `gitlab-runner` 固定
 - バケット側には Runner ロールに対する `s3:GetObject` / `s3:PutObject` / `s3:DeleteObject` / `s3:ListBucket` が必要
+
+メインスタックは `RunnerInstanceProfileArn` も IAM スタックの export から取得するため、通常は `parameters.json` に ARN を手入力する必要はない。IAM スタックとメインスタックは同一アカウント・同一リージョンに配置すること。
 
 ## CloudWatch Logs
 

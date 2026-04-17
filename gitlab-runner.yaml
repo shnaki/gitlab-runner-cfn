@@ -157,12 +157,12 @@ Parameters:
     Description: "SSM public parameter resolving to the latest AL2023 AMI."
 
   # --- IAM ---
-  RunnerInstanceProfileArn:
+  IamStackName:
     Type: String
-    MinLength: 1
+    Default: "gitlab-runner-iam"
     Description: >
-      RunnerInstanceProfile ARN created by the IAM stack (gitlab-runner-iam.yaml).
-      You can retrieve it with make outputs-iam.
+      Name of the IAM stack (gitlab-runner-iam.yaml) that exports the
+      RunnerInstanceProfileArn and optional CacheBucketName.
 
   # --- Access ---
   KeyPairName:
@@ -205,7 +205,7 @@ Metadata:
       - Label: { default: "Security Group" }
         Parameters: [ExistingSecurityGroupIds]
       - Label: { default: "IAM (deploy gitlab-runner-iam stack first)" }
-        Parameters: [RunnerInstanceProfileArn]
+        Parameters: [IamStackName]
       - Label: { default: "GitLab Runner" }
         Parameters:
           - GitLabUrl
@@ -247,7 +247,7 @@ Conditions:
     - !Not [!Equals [!Ref KeyPairName, ""]]
     - !Not [!Equals [!Ref AllowedSshCidr, ""]]
 
-  HasCacheBucket: !Not [!Equals [!Ref CacheBucketName, ""]]
+  HasExplicitCacheBucket: !Not [!Equals [!Ref CacheBucketName, ""]]
   HasCacheBucketLocation: !Not [!Equals [!Ref CacheBucketLocation, ""]]
   HasEcrDockerRegistries: !Not [!Equals [!Join ["", !Ref EcrDockerRegistries], ""]]
   HasSpotMaxPrice: !Not [!Equals [!Ref SpotMaxPrice, ""]]
@@ -321,7 +321,9 @@ Resources:
         ImageId: !Ref AmiId
         InstanceType: !Ref InstanceType
         IamInstanceProfile:
-          Arn: !Ref RunnerInstanceProfileArn
+          Arn:
+            Fn::ImportValue:
+              Fn::Sub: "${IamStackName}-InstanceProfileArn"
         KeyName: !If [UseKeyPair, !Ref KeyPairName, !Ref AWS::NoValue]
         MetadataOptions:
           HttpTokens: required
@@ -459,14 +461,14 @@ Resources:
                     volumes = ["/cache"]
                 TOML
 
-                if [ "${EnableRunnerCache}" = "true" ]; then
+                if [ -n "${ResolvedCacheBucketName}" ]; then
                   cat >> /etc/gitlab-runner/register-template.toml <<TOML
                   [runners.cache]
                     Type = "s3"
                     Path = "gitlab-runner"
                     Shared = true
                     [runners.cache.s3]
-                      BucketName = "${CacheBucketName}"
+                      BucketName = "${ResolvedCacheBucketName}"
                       BucketLocation = "${ResolvedCacheBucketLocation}"
                       AuthenticationType = "iam"
                   TOML
@@ -552,8 +554,12 @@ Resources:
                   -a fetch-config -m ec2 \
                   -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
               - EnableEcrDockerHelper: !If [HasEcrDockerRegistries, "true", "false"]
-                EnableRunnerCache: !If [HasCacheBucket, "true", "false"]
                 JoinedEcrDockerRegistries: !If [HasEcrDockerRegistries, !Join [",", !Ref EcrDockerRegistries], ""]
+                ResolvedCacheBucketName: !If
+                  - HasExplicitCacheBucket
+                  - !Ref CacheBucketName
+                  - Fn::ImportValue:
+                      Fn::Sub: "${IamStackName}-CacheBucketName"
                 ResolvedCacheBucketLocation: !If [HasCacheBucketLocation, !Ref CacheBucketLocation, !Ref AWS::Region]
 
   # --- EC2 Instance ---

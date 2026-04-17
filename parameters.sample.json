@@ -23,7 +23,7 @@
   { "ParameterKey": "RunnerStateVolumeSizeGiB",  "ParameterValue": "20" },
   { "ParameterKey": "RunnerStateVolumeAvailabilityZone", "ParameterValue": "" },
 
-  { "ParameterKey": "RunnerInstanceProfileArn",   "ParameterValue": "arn:aws:iam::123456789012:instance-profile/gitlab-runner-iam-RunnerInstanceProfile-XXXXXXXXXXXX" },
+  { "ParameterKey": "IamStackName",               "ParameterValue": "gitlab-runner-iam" },
 
   { "ParameterKey": "KeyPairName",               "ParameterValue": "" },
   { "ParameterKey": "AllowedSshCidr",            "ParameterValue": "" },

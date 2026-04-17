@@ -165,10 +165,16 @@ Resources:
 # ---------------------------------------------------------------------------
 Outputs:
   RunnerInstanceProfileArn:
-    Description: "ARN of the RunnerInstanceProfile. Pass this to the RunnerInstanceProfileArn parameter of gitlab-runner.yaml."
+    Description: "ARN of the RunnerInstanceProfile. Imported by gitlab-runner.yaml."
     Value: !GetAtt RunnerInstanceProfile.Arn
     Export:
       Name: !Sub "${AWS::StackName}-InstanceProfileArn"
+
+  CacheBucketName:
+    Description: "S3 cache bucket name for the runner. Empty when cache permissions are disabled."
+    Value: !Ref CacheBucketName
+    Export:
+      Name: !Sub "${AWS::StackName}-CacheBucketName"
 
   RunnerRoleArn:
     Description: "ARN of the RunnerRole"

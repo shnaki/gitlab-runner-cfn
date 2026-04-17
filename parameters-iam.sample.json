@@ -1,0 +1,4 @@
+[
+  { "ParameterKey": "CacheBucketName",       "ParameterValue": "" },
+  { "ParameterKey": "EcrPullRepositoryArns", "ParameterValue": "" }
+]

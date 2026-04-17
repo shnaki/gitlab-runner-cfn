@@ -71,13 +71,6 @@ Parameters:
     Default: "alpine:latest"
     Description: ".gitlab-ci.yml で未指定時に使うデフォルトの Docker イメージ。"
 
-  EcrPullRepositoryArns:
-    Type: CommaDelimitedList
-    Default: ""
-    Description: >
-      Runner に pull を許可する ECR repository ARN。カンマ区切りで指定します。
-      空の場合は private ECR の pull 権限を付与しません。
-
   EcrDockerRegistries:
     Type: CommaDelimitedList
     Default: ""
@@ -133,6 +126,14 @@ Parameters:
     Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
     Description: "最新の AL2023 AMI を解決する SSM Public Parameter。"
 
+  # --- IAM ---
+  RunnerInstanceProfileArn:
+    Type: String
+    MinLength: 1
+    Description: >
+      IAM スタック (gitlab-runner-iam.yaml) でデプロイ済みの RunnerInstanceProfile ARN。
+      make outputs-iam で確認できます。
+
   # --- Access ---
   KeyPairName:
     Type: String
@@ -166,6 +167,8 @@ Metadata:
         Parameters: [VpcId, SubnetId, AssignPublicIp]
       - Label: { default: "Security Group" }
         Parameters: [ExistingSecurityGroupIds]
+      - Label: { default: "IAM (deploy gitlab-runner-iam stack first)" }
+        Parameters: [RunnerInstanceProfileArn]
       - Label: { default: "GitLab Runner" }
         Parameters:
           - GitLabUrl
@@ -174,7 +177,6 @@ Metadata:
           - RunnerTags
           - RunnerConcurrent
           - RunnerDefaultDockerImage
-          - EcrPullRepositoryArns
           - EcrDockerRegistries
           - RunnerPrivileged
           - RunnerLocked
@@ -201,7 +203,6 @@ Conditions:
 
   HasCacheBucket: !Not [!Equals [!Ref CacheBucketName, ""]]
   HasCacheBucketLocation: !Not [!Equals [!Ref CacheBucketLocation, ""]]
-  HasEcrPullRepositories: !Not [!Equals [!Join ["", !Ref EcrPullRepositoryArns], ""]]
   HasEcrDockerRegistries: !Not [!Equals [!Join ["", !Ref EcrDockerRegistries], ""]]
   HasSpotMaxPrice: !Not [!Equals [!Ref SpotMaxPrice, ""]]
   UseKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
@@ -241,60 +242,6 @@ Resources:
       CidrIp: !Ref AllowedSshCidr
       Description: "指定した CIDR からの SSH を許可"
 
-  # --- IAM ---
-  RunnerRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal: { Service: ec2.amazonaws.com }
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-      Policies:
-        - !If
-          - HasCacheBucket
-          - PolicyName: runner-cache-bucket
-            PolicyDocument:
-              Version: "2012-10-17"
-              Statement:
-                - Effect: Allow
-                  Action:
-                    - s3:GetObject
-                    - s3:PutObject
-                    - s3:DeleteObject
-                  Resource: !Sub "arn:${AWS::Partition}:s3:::${CacheBucketName}/*"
-                - Effect: Allow
-                  Action:
-                    - s3:ListBucket
-                    - s3:GetBucketLocation
-                  Resource: !Sub "arn:${AWS::Partition}:s3:::${CacheBucketName}"
-          - !Ref AWS::NoValue
-        - !If
-          - HasEcrPullRepositories
-          - PolicyName: runner-ecr-pull
-            PolicyDocument:
-              Version: "2012-10-17"
-              Statement:
-                - Effect: Allow
-                  Action:
-                    - ecr:GetAuthorizationToken
-                  Resource: "*"
-                - Effect: Allow
-                  Action:
-                    - ecr:BatchCheckLayerAvailability
-                    - ecr:BatchGetImage
-                    - ecr:GetDownloadUrlForLayer
-                  Resource: !Ref EcrPullRepositoryArns
-          - !Ref AWS::NoValue
-
-  RunnerInstanceProfile:
-    Type: AWS::IAM::InstanceProfile
-    Properties:
-      Roles: [!Ref RunnerRole]
-
   # --- Launch Template ---
   RunnerLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
@@ -304,7 +251,7 @@ Resources:
         ImageId: !Ref AmiId
         InstanceType: !Ref InstanceType
         IamInstanceProfile:
-          Arn: !GetAtt RunnerInstanceProfile.Arn
+          Arn: !Ref RunnerInstanceProfileArn
         KeyName: !If [UseKeyPair, !Ref KeyPairName, !Ref AWS::NoValue]
         MetadataOptions:
           HttpTokens: required

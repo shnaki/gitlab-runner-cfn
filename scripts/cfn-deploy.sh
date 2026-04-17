@@ -32,9 +32,11 @@ base_args=(
   --stack-name "$stack_name"
   --template-body "file://$template_file"
   --parameters "file://$params_file"
-  --capabilities CAPABILITY_IAM
   --region "$region"
 )
+if [ -n "${CFN_CAPABILITIES:-}" ]; then
+  base_args+=(--capabilities "$CFN_CAPABILITIES")
+fi
 
 if [ "$mode" = "changeset" ]; then
   if [ -z "$change_set_name" ]; then

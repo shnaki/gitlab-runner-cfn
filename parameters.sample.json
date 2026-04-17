@@ -11,7 +11,6 @@
   { "ParameterKey": "RunnerTags",                "ParameterValue": "aws,docker" },
   { "ParameterKey": "RunnerConcurrent",          "ParameterValue": "2" },
   { "ParameterKey": "RunnerDefaultDockerImage",  "ParameterValue": "alpine:latest" },
-  { "ParameterKey": "EcrPullRepositoryArns",     "ParameterValue": "" },
   { "ParameterKey": "EcrDockerRegistries",       "ParameterValue": "" },
   { "ParameterKey": "RunnerPrivileged",          "ParameterValue": "false" },
   { "ParameterKey": "RunnerLocked",              "ParameterValue": "true" },
@@ -20,6 +19,8 @@
   { "ParameterKey": "InstanceType",              "ParameterValue": "t3.small" },
   { "ParameterKey": "SpotMaxPrice",              "ParameterValue": "" },
   { "ParameterKey": "VolumeSizeGiB",             "ParameterValue": "50" },
+
+  { "ParameterKey": "RunnerInstanceProfileArn",   "ParameterValue": "arn:aws:iam::123456789012:instance-profile/gitlab-runner-iam-RunnerInstanceProfile-XXXXXXXXXXXX" },
 
   { "ParameterKey": "KeyPairName",               "ParameterValue": "" },
   { "ParameterKey": "AllowedSshCidr",            "ParameterValue": "" },

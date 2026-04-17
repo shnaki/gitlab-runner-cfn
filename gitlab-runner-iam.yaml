@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  GitLab Runner 用 IAM ロール / インスタンスプロファイルを作成します。
+  このテンプレートは CAPABILITY_IAM が必要なため、IAM 権限を持つ管理者が
+  一度だけデプロイしてください。
+  メインスタック (gitlab-runner.yaml) は IAM 権限なしでデプロイできます。
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  CacheBucketName:
+    Type: String
+    Default: ""
+    Description: "Runner の分散キャッシュに使う既存 S3 バケット名。空の場合は S3 ポリシーを付与しません。"
+
+  EcrPullRepositoryArns:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >
+      Runner に pull を許可する ECR repository ARN。カンマ区切りで指定します。
+      空の場合は private ECR の pull 権限を付与しません。
+
+# ---------------------------------------------------------------------------
+# Conditions
+# ---------------------------------------------------------------------------
+Conditions:
+  HasCacheBucket: !Not [!Equals [!Ref CacheBucketName, ""]]
+  HasEcrPullRepositories: !Not [!Equals [!Join ["", !Ref EcrPullRepositoryArns], ""]]
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+  RunnerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - !If
+          - HasCacheBucket
+          - PolicyName: runner-cache-bucket
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                    - s3:PutObject
+                    - s3:DeleteObject
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${CacheBucketName}/*"
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                    - s3:GetBucketLocation
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${CacheBucketName}"
+          - !Ref AWS::NoValue
+        - !If
+          - HasEcrPullRepositories
+          - PolicyName: runner-ecr-pull
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ecr:GetAuthorizationToken
+                  Resource: "*"
+                - Effect: Allow
+                  Action:
+                    - ecr:BatchCheckLayerAvailability
+                    - ecr:BatchGetImage
+                    - ecr:GetDownloadUrlForLayer
+                  Resource: !Ref EcrPullRepositoryArns
+          - !Ref AWS::NoValue
+
+  RunnerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref RunnerRole]
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+  RunnerInstanceProfileArn:
+    Description: "RunnerInstanceProfile の ARN。メインスタック (gitlab-runner.yaml) の RunnerInstanceProfileArn パラメータに指定します。"
+    Value: !GetAtt RunnerInstanceProfile.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-InstanceProfileArn"
+
+  RunnerRoleArn:
+    Description: "RunnerRole の ARN"
+    Value: !GetAtt RunnerRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-RoleArn"

@@ -36,36 +36,49 @@ param_value() {
   jq -r --arg key "$key" '.[] | select(.ParameterKey == $key) | .ParameterValue' "$params_file" | head -n1
 }
 
-runner_state_volume_id=$(param_value "RunnerStateVolumeId")
-runner_state_volume_az=$(param_value "RunnerStateVolumeAvailabilityZone")
-subnet_id=$(param_value "SubnetId")
+template_param_keys=$(aws cloudformation validate-template \
+  --template-body "file://$template_file" \
+  --region "$region" \
+  --query 'Parameters[].ParameterKey' \
+  --output json)
 
-if [ -z "$runner_state_volume_id" ] && [ -z "$runner_state_volume_az" ]; then
-  if [ -z "$subnet_id" ]; then
-    echo "ERROR: SubnetId parameter is required to derive RunnerStateVolumeAvailabilityZone" >&2
-    exit 1
+template_has_param() {
+  local key=$1
+  jq -e --arg key "$key" 'index($key) != null' <<<"$template_param_keys" >/dev/null
+}
+
+if template_has_param "RunnerStateVolumeAvailabilityZone"; then
+  runner_state_volume_id=$(param_value "RunnerStateVolumeId")
+  runner_state_volume_az=$(param_value "RunnerStateVolumeAvailabilityZone")
+  subnet_id=$(param_value "SubnetId")
+
+  if [ -z "$runner_state_volume_id" ] && [ -z "$runner_state_volume_az" ]; then
+    if [ -z "$subnet_id" ]; then
+      echo "ERROR: SubnetId parameter is required to derive RunnerStateVolumeAvailabilityZone" >&2
+      exit 1
+    fi
+
+    runner_state_volume_az=$(aws ec2 describe-subnets \
+      --subnet-ids "$subnet_id" \
+      --region "$region" \
+      --query 'Subnets[0].AvailabilityZone' \
+      --output text)
+
+    if [ -z "$runner_state_volume_az" ] || [ "$runner_state_volume_az" = "None" ]; then
+      echo "ERROR: failed to resolve AvailabilityZone for subnet $subnet_id" >&2
+      exit 1
+    fi
+
+    tmp_params_file=$(mktemp)
+    jq --arg az "$runner_state_volume_az" '
+      if any(.[]; .ParameterKey == "RunnerStateVolumeAvailabilityZone") then
+        map(if .ParameterKey == "RunnerStateVolumeAvailabilityZone" then .ParameterValue = $az else . end)
+      else
+        . + [{ParameterKey: "RunnerStateVolumeAvailabilityZone", ParameterValue: $az}]
+      end
+    ' "$params_file" > "$tmp_params_file"
+    params_file=$tmp_params_file
   fi
-
-  runner_state_volume_az=$(aws ec2 describe-subnets \
-    --subnet-ids "$subnet_id" \
-    --region "$region" \
-    --query 'Subnets[0].AvailabilityZone' \
-    --output text)
-
-  if [ -z "$runner_state_volume_az" ] || [ "$runner_state_volume_az" = "None" ]; then
-    echo "ERROR: failed to resolve AvailabilityZone for subnet $subnet_id" >&2
-    exit 1
-  fi
-
-  tmp_params_file=$(mktemp)
-  jq --arg az "$runner_state_volume_az" '
-    if any(.[]; .ParameterKey == "RunnerStateVolumeAvailabilityZone") then
-      map(if .ParameterKey == "RunnerStateVolumeAvailabilityZone" then .ParameterValue = $az else . end)
-    else
-      . + [{ParameterKey: "RunnerStateVolumeAvailabilityZone", ParameterValue: $az}]
-    end
-  ' "$params_file" > "$tmp_params_file"
-  params_file=$tmp_params_file
 fi
 
 stack_exists=false

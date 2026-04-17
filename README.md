@@ -111,7 +111,7 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 |---|---|---|---|
 | `CacheBucketName` | - | `""` | Runner 分散キャッシュ用 S3 バケット名。空なら S3 権限なし |
 | `EcrRepositoryArns` | - | `""` | push / pull を許可する ECR repository ARN（カンマ区切り）。空なら ECR 権限なし |
-| `GitLabOidcProviderArn` | - | `""` | GitLab OIDC provider の ARN。空なら OIDC trust なし |
+| `GitLabOidcProviderArn` | - | `""` | GitLab OIDC provider の ARN。空なら OIDC trust なし。**GitLab 15.7 以降が必要** |
 | `GitLabOidcIssuerHost` | - | `gitlab.com` | GitLab OIDC issuer のホスト名（`https://` 除く）。セルフホストの場合は自インスタンスのホスト名 |
 | `GitLabOidcAudience` | - | `https://gitlab.com` | JWT の `aud` クレーム。セルフホストの場合はインスタンス URL（末尾スラッシュなし） |
 | `GitLabOidcSubjectClaim` | - | `""` | `sub` クレームの StringLike パターン。空なら OIDC trust なし |
@@ -234,9 +234,11 @@ build:
 
 セキュリティを重視する場合は後述の **GitLab OIDC** 方式を使い、push 権限を特定のプロジェクト・ブランチに限定することを推奨。
 
-## GitLab OIDC で AssumeRole する
+## GitLab OIDC で AssumeRole する（GitLab 15.7 以降）
 
 IAM スタックは GitLab OIDC provider との trust を設定できる。これにより各ジョブが Runner EC2 ロールとは別の IAM Role を AssumeRole でき、push 権限などをプロジェクト・ブランチ単位で制限できる。
+
+> **バージョン要件**: `.gitlab-ci.yml` の `id_tokens:` キーワードおよび GitLab OIDC Provider は **GitLab 15.7 以降** が必要。それ以前のバージョンでは本機能は利用できない。
 
 `parameters-iam.json`:
 

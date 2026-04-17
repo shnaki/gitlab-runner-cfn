@@ -26,6 +26,7 @@ Parameters:
     Description: >
       ARN of the GitLab OIDC identity provider in IAM
       (e.g. arn:aws:iam::123456789012:oidc-provider/gitlab.com).
+      Requires GitLab 15.7 or later (id_tokens keyword).
       Leave empty to disable OIDC trust.
 
   GitLabOidcIssuerHost:

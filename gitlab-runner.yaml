@@ -381,10 +381,16 @@ Resources:
                 set -euo pipefail
                 exec > >(tee -a /var/log/user-data.log) 2>&1
 
+                _last_err_cmd=""
+                trap '_last_err_cmd="line $LINENO: $BASH_COMMAND"' ERR
+
                 cfn_signal() {
                   local exit_code=$1
-                  echo "[user-data] signaling CloudFormation with exit code $exit_code"
+                  local reason="$_last_err_cmd"
+                  [ -z "$reason" ] && reason="success"
+                  echo "[user-data] signaling CloudFormation exit=$exit_code reason=$reason"
                   /opt/aws/bin/cfn-signal -e "$exit_code" \
+                    --reason "$reason" \
                     --stack ${AWS::StackName} \
                     --resource RunnerInstance \
                     --region ${AWS::Region}
@@ -471,7 +477,7 @@ Resources:
                       BucketName = "${ResolvedCacheBucketName}"
                       BucketLocation = "${ResolvedCacheBucketLocation}"
                       AuthenticationType = "iam"
-                  TOML
+                TOML
                 fi
                 chmod 0600 /etc/gitlab-runner/register-template.toml
 
@@ -532,16 +538,6 @@ Resources:
                             "file_path": "/var/log/user-data.log",
                             "log_group_name": "/${AWS::StackName}/runner",
                             "log_stream_name": "{instance_id}/user-data",
-                            "timezone": "UTC"
-                          }
-                        ]
-                      },
-                      "journald": {
-                        "collect_list": [
-                          {
-                            "log_group_name": "/${AWS::StackName}/runner",
-                            "log_stream_name": "{instance_id}/gitlab-runner",
-                            "units": ["gitlab-runner.service"],
                             "timezone": "UTC"
                           }
                         ]

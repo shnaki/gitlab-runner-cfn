@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  既存の VPC/Subnet に、単一の Spot EC2 インスタンスとして
-  GitLab Runner (Docker executor) を構築します。
-  Security Group はこのテンプレートで作成するか、既存のものを再利用できます。
+  GitLab Runner (Docker executor) on a single Spot EC2 instance.
+  Targets an existing VPC/Subnet (expected to be private with a NAT Gateway).
+  Security Group can be either created here or reused from outside.
 
 # ---------------------------------------------------------------------------
 # Parameters
@@ -11,91 +11,93 @@ Parameters:
   # --- Network (existing VPC required) ---
   VpcId:
     Type: AWS::EC2::VPC::Id
-    Description: "Runner を配置する既存 VPC の ID。"
+    Description: "Existing VPC ID to deploy the runner into."
 
   SubnetId:
     Type: AWS::EC2::Subnet::Id
     Description: >
-      既存 Subnet の ID。通常は GitLab、パッケージリポジトリ、
-      Docker Hub へ outbound できる NAT Gateway 付き private subnet を指定します。
+      Existing Subnet ID. Normally a private subnet with NAT Gateway route
+      for outbound to GitLab / package repos / Docker Hub.
 
   AssignPublicIp:
     Type: String
     AllowedValues: ["Yes", "No", "SubnetDefault"]
     Default: "No"
     Description: >
-      Runner の ENI に public IPv4 を関連付けるかを指定します。
-      - No (デフォルト): public IP を付与しません。別の outbound 経路
-        (NAT Gateway / VPC Endpoint) が必要です。
-      - Yes: public IP を強制的に付与します。subnet に IGW への経路が必要です。
-      - SubnetDefault: subnet の MapPublicIpOnLaunch 設定に従います。
+      Whether to associate a public IPv4 address to the runner ENI.
+      - No (default): never assign a public IP. Requires the subnet to have
+        an alternative egress path (NAT Gateway / VPC endpoints).
+      - Yes: force-assign a public IP (subnet must have IGW route).
+      - SubnetDefault: defer to the subnet's MapPublicIpOnLaunch setting.
 
   # --- Security Group ---
   ExistingSecurityGroupIds:
     Type: CommaDelimitedList
     Default: ""
     Description: >
-      Runner に付与する既存 Security Group ID をカンマ区切りで指定します。
-      指定した場合は新しい SG を作成しません。空の場合はこのスタックで SG を作成します。
+      Comma-separated existing Security Group IDs to attach to the runner.
+      When provided, a new SG is NOT created (useful when the self-hosted
+      GitLab server has allowlisted a specific SG ID that you don't want to
+      rotate). Leave empty to have this stack create its own SG.
 
   # --- GitLab Runner ---
   GitLabUrl:
     Type: String
     Default: "https://gitlab.example.com/"
-    Description: "セルフホスト GitLab の URL。末尾は / で終える必要があります。"
+    Description: "Self-hosted GitLab URL (must end with /)."
 
   RegistrationToken:
     Type: String
     NoEcho: true
     MinLength: 1
-    Description: "GitLab UI で取得した Runner 登録トークン。"
+    Description: "Runner registration token obtained from GitLab UI."
 
   RunnerDescription:
     Type: String
     Default: "cfn-gitlab-runner"
-    Description: "GitLab の Runners 画面に表示される説明。"
+    Description: "Description shown in GitLab Runners page."
 
   RunnerTags:
     Type: String
     Default: "aws,docker"
-    Description: "この Runner に付与するタグ一覧。カンマ区切りで指定します。"
+    Description: "Comma-separated tag list for this runner."
 
   RunnerConcurrent:
     Type: Number
     Default: 2
     MinValue: 1
-    Description: "この Runner プロセスで同時実行できるジョブ数の上限。"
+    Description: "Max concurrent jobs for this runner process."
 
   RunnerDefaultDockerImage:
     Type: String
     Default: "alpine:latest"
-    Description: ".gitlab-ci.yml で未指定時に使うデフォルトの Docker イメージ。"
+    Description: "Default docker image when .gitlab-ci.yml does not set one."
 
   EcrDockerRegistries:
     Type: CommaDelimitedList
     Default: ""
     Description: >
-      Docker credential helper を設定する ECR registry host。カンマ区切りで指定します。
-      例: 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com
-      空の場合は docker credential helper を設定しません。
+      Comma-separated ECR registry hosts to configure for docker credential
+      helper (for example 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com).
+      Leave empty to skip docker credential helper setup.
 
   RunnerPrivileged:
     Type: String
     AllowedValues: ["true", "false"]
     Default: "false"
-    Description: "コンテナを privileged モードで実行します。DinD 利用時に必要です。"
+    Description: "Run containers in privileged mode (required for DinD)."
 
   RunnerLocked:
     Type: String
     AllowedValues: ["true", "false"]
     Default: "true"
-    Description: "Runner を現在のプロジェクトにロックします。"
+    Description: "Lock runner to the current project."
 
   RunnerRunUntagged:
     Type: String
     AllowedValues: ["true", "false"]
     Default: "false"
-    Description: "タグなしジョブの実行を許可します。"
+    Description: "Allow running jobs without tags."
 
   # --- Compute ---
   InstanceType:
@@ -108,23 +110,23 @@ Parameters:
       - t3.medium
       - t3.large
       - m6i.large
-    Description: "Runner に使用する EC2 インスタンスタイプ。"
+    Description: "EC2 instance type for the runner."
 
   SpotMaxPrice:
     Type: String
     Default: ""
-    Description: "Spot の上限価格 (USD/時間)。空の場合はオンデマンド価格が上限です。"
+    Description: "Max spot price (USD/hour). Empty = cap at on-demand price."
 
   VolumeSizeGiB:
     Type: Number
     Default: 50
     MinValue: 8
-    Description: "ルート EBS ボリュームのサイズ (GiB)。"
+    Description: "Root EBS volume size in GiB."
 
   AmiId:
     Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
     Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
-    Description: "最新の AL2023 AMI を解決する SSM Public Parameter。"
+    Description: "SSM public parameter resolving to the latest AL2023 AMI."
 
   # --- IAM ---
   RunnerInstanceProfileArn:
@@ -138,27 +140,27 @@ Parameters:
   KeyPairName:
     Type: String
     Default: ""
-    Description: "任意の SSH 用 EC2 KeyPair 名。空の場合は SSM のみで接続します。"
+    Description: "EC2 KeyPair name for optional SSH. Leave empty for SSM-only access."
 
   AllowedSshCidr:
     Type: String
     Default: ""
     Description: >
-      SSH を許可する CIDR (例: 203.0.113.0/32)。
-      ExistingSecurityGroupIds を指定した場合は無視されます。空の場合は SSH ingress を無効化します。
+      CIDR allowed to SSH (e.g. 203.0.113.0/32). Ignored when
+      ExistingSecurityGroupIds is set. Leave empty to disable SSH ingress.
 
   # --- Storage / cache ---
   CacheBucketName:
     Type: String
     Default: ""
-    Description: "Runner の分散キャッシュに使う既存 S3 バケット名。空の場合は S3 ポリシーを付与しません。"
+    Description: "Existing S3 bucket for runner distributed cache. Empty = no S3 policy."
 
   CacheBucketLocation:
     Type: String
     Default: ""
     Description: >
-      CacheBucketName の AWS リージョン。空の場合はスタックのリージョンを使います。
-      CacheBucketName が空の場合は無視されます。
+      AWS region of CacheBucketName. Empty = use the stack region.
+      Ignored when CacheBucketName is empty.
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -226,7 +228,7 @@ Resources:
       SecurityGroupEgress:
         - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
-          Description: "すべての outbound 通信を許可"
+          Description: "Allow all egress"
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-sg"
@@ -240,7 +242,7 @@ Resources:
       FromPort: 22
       ToPort: 22
       CidrIp: !Ref AllowedSshCidr
-      Description: "指定した CIDR からの SSH を許可"
+      Description: "SSH from allowed CIDR"
 
   # --- Launch Template ---
   RunnerLaunchTemplate:
@@ -414,35 +416,35 @@ Resources:
 # ---------------------------------------------------------------------------
 Outputs:
   InstanceId:
-    Description: "EC2 インスタンス ID"
+    Description: "EC2 instance ID"
     Value: !Ref RunnerInstance
 
   PrivateIp:
-    Description: "Runner の private IPv4 アドレス"
+    Description: "Private IPv4 of the runner"
     Value: !GetAtt RunnerInstance.PrivateIp
 
   VpcIdUsed:
-    Description: "Runner が使用する VPC"
+    Description: "VPC used by the runner"
     Value: !Ref VpcId
 
   SubnetIdUsed:
-    Description: "Runner が使用する Subnet"
+    Description: "Subnet used by the runner"
     Value: !Ref SubnetId
 
   SecurityGroupIds:
-    Description: "Runner に付与された Security Group ID"
+    Description: "Security Group IDs attached to the runner"
     Value: !If
       - ShouldCreateSecurityGroup
       - !Ref RunnerSecurityGroup
       - !Join [",", !Ref ExistingSecurityGroupIds]
 
   EcrDockerRegistriesConfigured:
-    Description: "Docker credential helper を設定した ECR registry host"
+    Description: "ECR registry hosts configured for docker credential helper"
     Value: !If
       - HasEcrDockerRegistries
       - !Join [",", !Ref EcrDockerRegistries]
       - ""
 
   SsmSessionCommand:
-    Description: "SSM Session Manager シェルを開くための 1 行コマンド"
+    Description: "One-liner to open an SSM Session Manager shell"
     Value: !Sub "aws ssm start-session --region ${AWS::Region} --target ${RunnerInstance}"

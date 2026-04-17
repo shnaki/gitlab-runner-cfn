@@ -129,6 +129,17 @@ Resources:
                     - ecr:CompleteLayerUpload
                   Resource: !Ref EcrRepositoryArns
           - !Ref AWS::NoValue
+        - PolicyName: runner-cloudwatch-logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/${AWS::StackName}/*"
 
   RunnerInstanceProfile:
     Type: AWS::IAM::InstanceProfile

@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   GitLab Runner (Docker executor) on a single Spot EC2 instance.
-  Targets an existing VPC/Subnet (expected to be private with a NAT Gateway).
+  Targets an existing VPC/Subnet. Supports both private subnets (NAT Gateway)
+  and public subnets (Internet Gateway with AssignPublicIp=Yes).
   Security Group can be either created here or reused from outside.
 
 # ---------------------------------------------------------------------------
@@ -16,8 +17,9 @@ Parameters:
   SubnetId:
     Type: AWS::EC2::Subnet::Id
     Description: >
-      Existing Subnet ID. Normally a private subnet with NAT Gateway route
-      for outbound to GitLab / package repos / Docker Hub.
+      Existing Subnet ID.
+      - Private subnet: requires NAT Gateway route for outbound.
+      - Public subnet: set AssignPublicIp=Yes to assign a public IP via IGW.
 
   AssignPublicIp:
     Type: String

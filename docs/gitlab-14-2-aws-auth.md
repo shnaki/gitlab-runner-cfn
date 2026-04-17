@@ -111,7 +111,16 @@ Runner が private ECR のイメージを pull できるようにするには、
 - IAM スタックの `EcrRepositoryArns`
 - メインスタックの `EcrDockerRegistries`
 
+`EcrRepositoryArns` は既存 private ECR repository への IAM 権限付与用。`EcrDockerRegistries` は Docker credential helper の認証先 registry host 設定用で、repository 作成は行わない。
+
+通常、private ECR repository は AWS 側で push 前に事前作成しておく。`docker push` 時の自動作成に依存する運用は、このテンプレートの前提に含めない。
+
 利用側では通常の `image:` として参照できる。
+
+`EcrRepositoryArns` の例:
+
+- 個別 repository のみ許可: `arn:aws:ecr:ap-northeast-1:111111111111:repository/base-ci`
+- 同一アカウント内の全 repository を許可: `arn:aws:ecr:ap-northeast-1:111111111111:repository/*`
 
 ### 例: ECR のイメージをジョブに使う
 

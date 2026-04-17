@@ -120,7 +120,7 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | 名前 | 必須 | デフォルト | 説明 |
 |---|---|---|---|
 | `CacheBucketName` | - | `""` | Runner 分散キャッシュ用 S3 バケット名。空なら S3 権限なし |
-| `EcrRepositoryArns` | - | `""` | push / pull を許可する ECR repository ARN（カンマ区切り）。空なら ECR 権限なし |
+| `EcrRepositoryArns` | - | `""` | 既存 private ECR repository への push / pull を許可する repository ARN または ARN パターン（カンマ区切り）。空なら ECR 権限なし |
 
 ## メインスタックのパラメータ一覧
 
@@ -138,7 +138,7 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | `RunnerTags` | - | `aws,docker` | legacy registration token 利用時の Runner タグ（カンマ区切り）。authentication token 利用時は GitLab UI/API 側で管理 |
 | `RunnerConcurrent` | - | `2` | 同時実行ジョブ数 |
 | `RunnerDefaultDockerImage` | - | `alpine:latest` | デフォルト Docker イメージ |
-| `EcrDockerRegistries` | - | `""` | Docker credential helper を有効化する ECR registry host（カンマ区切り） |
+| `EcrDockerRegistries` | - | `""` | Docker credential helper を有効化する ECR registry host（カンマ区切り）。IAM 権限範囲や repository 作成は制御しない |
 | `RunnerPrivileged` | - | `false` | privileged モード（DinD 用途なら `true`） |
 | `RunnerLocked` | - | `true` | legacy registration token 利用時のみ有効。authentication token 利用時は GitLab UI/API 側で管理 |
 | `RunnerRunUntagged` | - | `false` | legacy registration token 利用時のみ有効。authentication token 利用時は GitLab UI/API 側で管理 |
@@ -291,7 +291,8 @@ aws logs tail /gitlab-runner/runner --follow --region ap-northeast-1
 - **Spot 中断時にジョブは中断される**。本テンプレートは単一 EC2 のため自動復旧しない。
 - **runner state volume には `/etc/gitlab-runner/config.toml` が残る**。再利用時は runner token を含む設定を引き継ぐため、不要になった volume は適切に破棄すること。
 - EBS は暗号化（gp3）。IMDS は v2 強制。
-- `EcrRepositoryArns` を広く取りすぎると Runner が操作できる ECR 範囲も広がる。必要最小限の repository ARN に絞ること。
+- `EcrRepositoryArns` は既存 private ECR repository への権限付与に使う。repository 自体は通常 push 前に AWS 側で事前作成しておくこと。
+- `EcrRepositoryArns` を広く取りすぎると Runner が操作できる ECR 範囲も広がる。必要最小限の repository ARN に絞ること。同一アカウント内の全 repository を許可したい場合のみ `arn:aws:ecr:<region>:<account-id>:repository/*` のような ARN パターンを使う。
 
 ## トラブルシュート
 

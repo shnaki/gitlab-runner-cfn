@@ -41,23 +41,17 @@ outputs: ## Print stack outputs
 		--query 'Stacks[0].Outputs' --output table
 
 session: ## Open SSM Session Manager to the runner instance
-	@INSTANCE_ID=$$($(AWS) cloudformation describe-stacks \
-		--stack-name $(STACK_NAME) $(AWSFLAGS) \
-		--query 'Stacks[0].Outputs[?OutputKey==`InstanceId`].OutputValue' --output text); \
-	echo "Connecting to $$INSTANCE_ID..."; \
-	$(AWS) ssm start-session --target $$INSTANCE_ID $(AWSFLAGS)
+	$(BASH) scripts/session.sh $(STACK_NAME) $(REGION)
 
 validate-iam: ## Validate the IAM CloudFormation template
 	$(AWS) cloudformation validate-template \
 		--template-body file://$(IAM_TEMPLATE) $(AWSFLAGS)
 
 deploy-iam: $(IAM_PARAMS) ## Deploy or update the IAM stack (requires IAM permissions)
-	CFN_CAPABILITIES=CAPABILITY_IAM \
-	$(BASH) scripts/cfn-deploy.sh deploy $(IAM_STACK_NAME) $(REGION) $(IAM_TEMPLATE) $(IAM_PARAMS)
+	$(BASH) -c "CFN_CAPABILITIES=CAPABILITY_IAM $(BASH) scripts/cfn-deploy.sh deploy $(IAM_STACK_NAME) $(REGION) $(IAM_TEMPLATE) $(IAM_PARAMS)"
 
 changeset-iam: $(IAM_PARAMS) ## Create a change set for the IAM stack (dry-run)
-	CFN_CAPABILITIES=CAPABILITY_IAM \
-	$(BASH) scripts/cfn-deploy.sh changeset $(IAM_STACK_NAME) $(REGION) $(IAM_TEMPLATE) $(IAM_PARAMS) $(IAM_STACK_NAME)-preview
+	$(BASH) -c "CFN_CAPABILITIES=CAPABILITY_IAM $(BASH) scripts/cfn-deploy.sh changeset $(IAM_STACK_NAME) $(REGION) $(IAM_TEMPLATE) $(IAM_PARAMS) $(IAM_STACK_NAME)-preview"
 
 delete-iam: ## Delete the IAM stack
 	$(AWS) cloudformation delete-stack --stack-name $(IAM_STACK_NAME) $(AWSFLAGS)

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export AWS_PAGER=
 
 if [ "$#" -lt 5 ] || [ "$#" -gt 6 ]; then
   echo "usage: $0 <deploy|changeset> <stack-name> <region> <template-file> <params-file> [change-set-name]" >&2
@@ -112,10 +113,28 @@ if [ "$mode" = "changeset" ]; then
     --change-set-name "$change_set_name" \
     --change-set-type "$change_set_type"
 
+  set +e
   aws cloudformation wait change-set-create-complete \
     --stack-name "$stack_name" \
     --change-set-name "$change_set_name" \
-    --region "$region"
+    --region "$region" 2>/dev/null
+  wait_status=$?
+  set -e
+
+  if [ "$wait_status" -ne 0 ]; then
+    cs_reason=$(aws cloudformation describe-change-set \
+      --stack-name "$stack_name" \
+      --change-set-name "$change_set_name" \
+      --region "$region" \
+      --query 'StatusReason' \
+      --output text)
+    if grep -qi "didn't contain changes" <<<"$cs_reason"; then
+      echo "No changes to be deployed."
+      exit 0
+    fi
+    echo "$cs_reason" >&2
+    exit "$wait_status"
+  fi
 
   aws cloudformation describe-change-set \
     --stack-name "$stack_name" \
@@ -151,6 +170,7 @@ if [ "$stack_exists" = true ]; then
   exit 0
 fi
 
+base_args+=(--disable-rollback)
 aws cloudformation create-stack "${base_args[@]}"
 aws cloudformation wait stack-create-complete --stack-name "$stack_name" --region "$region"
 aws cloudformation describe-stacks --stack-name "$stack_name" --region "$region" --query 'Stacks[0].StackStatus'

@@ -6,7 +6,7 @@
   { "ParameterKey": "ExistingSecurityGroupIds",  "ParameterValue": "" },
 
   { "ParameterKey": "GitLabUrl",                 "ParameterValue": "https://gitlab.example.com/" },
-  { "ParameterKey": "RegistrationToken",         "ParameterValue": "REPLACE_ME" },
+  { "ParameterKey": "RegistrationToken",         "ParameterValue": "REPLACE_ME_REGISTRATION_OR_GLRT_TOKEN" },
   { "ParameterKey": "RunnerDescription",         "ParameterValue": "cfn-gitlab-runner" },
   { "ParameterKey": "RunnerTags",                "ParameterValue": "aws,docker" },
   { "ParameterKey": "RunnerConcurrent",          "ParameterValue": "2" },

@@ -65,7 +65,9 @@
 - AWS CLI v2、`jq`、`make`
 - CloudFormation / EC2 権限（メインスタック）
 - CloudFormation / IAM 権限（IAM スタック — 初回のみ）
-- セルフホスト GitLab で取得済みの Runner **Registration Token**
+- セルフホスト GitLab で取得済みの Runner トークン
+  - GitLab 14.2: **Registration Token**
+  - 新しい GitLab: **Runner Authentication Token** (`glrt-...`)
 - Runner を置くサブネットから下記への到達性:
   - GitLab サーバ（VPC 内 / Peering / TGW / DX など）
   - インターネット（NAT Gateway、IGW + public IP、または VPC Endpoint 経由）
@@ -127,15 +129,15 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | `AssignPublicIp` | - | `No` | `Yes` / `No` / `SubnetDefault`（下記参照） |
 | `ExistingSecurityGroupIds` | - | `""` | 既存 SG ID（カンマ区切り）。指定時は新規 SG を作成しない |
 | `GitLabUrl` | ✓ | `https://gitlab.example.com/` | セルフホスト GitLab の URL（末尾 `/` 必要） |
-| `RegistrationToken` | ✓ | - | Runner 登録トークン（`NoEcho`） |
-| `RunnerDescription` | - | `cfn-gitlab-runner` | Runner 説明 |
-| `RunnerTags` | - | `aws,docker` | Runner タグ（カンマ区切り） |
+| `RegistrationToken` | ✓ | - | Runner トークン（`NoEcho`）。GitLab 14.2 では Registration Token、新しい GitLab では Runner Authentication Token (`glrt-...`) |
+| `RunnerDescription` | - | `cfn-gitlab-runner` | legacy registration token 利用時の Runner 説明。authentication token 利用時は GitLab UI/API 側で管理 |
+| `RunnerTags` | - | `aws,docker` | legacy registration token 利用時の Runner タグ（カンマ区切り）。authentication token 利用時は GitLab UI/API 側で管理 |
 | `RunnerConcurrent` | - | `2` | 同時実行ジョブ数 |
 | `RunnerDefaultDockerImage` | - | `alpine:latest` | デフォルト Docker イメージ |
 | `EcrDockerRegistries` | - | `""` | Docker credential helper を有効化する ECR registry host（カンマ区切り） |
 | `RunnerPrivileged` | - | `false` | privileged モード（DinD 用途なら `true`） |
-| `RunnerLocked` | - | `true` | 現プロジェクトにロック |
-| `RunnerRunUntagged` | - | `false` | タグなしジョブを受ける |
+| `RunnerLocked` | - | `true` | legacy registration token 利用時のみ有効。authentication token 利用時は GitLab UI/API 側で管理 |
+| `RunnerRunUntagged` | - | `false` | legacy registration token 利用時のみ有効。authentication token 利用時は GitLab UI/API 側で管理 |
 | `InstanceType` | - | `t3.small` | `t3.nano` / `t3.micro` / `t3.small` / `t3.medium` / `t3.large` / `m6i.large` |
 | `SpotMaxPrice` | - | `""` | Spot 最大価格 USD/時。空ならオンデマンド価格上限 |
 | `VolumeSizeGiB` | - | `50` | ルート EBS サイズ |
@@ -156,6 +158,34 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | `SubnetDefault` | サブネットの `MapPublicIpOnLaunch` に従う | サブネット側で自動割り当てが有効な場合のみ有効。無効（No）の場合はパブリック IP が付かない点に注意 |
 
 **注意**: public subnet（IGW ルートあり）に置く場合は `AssignPublicIp=Yes` を必ず指定すること。サブネットの「IPv4 自動割り当て（`MapPublicIpOnLaunch`）」が無効でも `Yes` を指定すれば EC2 起動時にパブリック IP が付与される。`No` または `SubnetDefault`（サブネット設定が無効な場合）のままにすると outbound できずスタック作成が失敗する。
+
+## Runner token の扱い
+
+- このテンプレートは `RegistrationToken` パラメータ名を互換のため維持しているが、値としては 2 種類を受け付ける
+  - GitLab 14.2 向けの legacy **Registration Token**
+  - 将来の GitLab 向け **Runner Authentication Token** (`glrt-...`)
+- `RegistrationToken` が `glrt-` で始まる場合、CloudFormation は `gitlab-runner register --token ...` を使う
+- `glrt-` 以外の場合は、従来どおり `gitlab-runner register --registration-token ...` を使う
+- authentication token 利用時、GitLab の仕様上、以下の属性は `register` コマンド引数では設定しない
+  - `RunnerDescription`
+  - `RunnerTags`
+  - `RunnerLocked`
+  - `RunnerRunUntagged`
+- これらは runner を GitLab UI または API で事前作成するときに設定する
+
+### GitLab 14.2 のまま使う場合
+
+- これまでどおり project / group / instance の Registration Token を `RegistrationToken` に設定する
+- `RunnerDescription` / `RunnerTags` / `RunnerLocked` / `RunnerRunUntagged` は CloudFormation 側で適用される
+
+### 将来 Authentication Token へ移行する場合
+
+1. GitLab UI または API で runner を事前作成する
+2. GitLab 側で description / tags / locked / run untagged を設定する
+3. 発行された `glrt-...` トークンを `RegistrationToken` に設定する
+4. スタックを更新する
+
+この移行では CloudFormation テンプレート自体の差し替えは不要で、トークン種別の切り替えで新フローに移行できる。
 
 ## Security Group モード
 

@@ -52,7 +52,10 @@ Parameters:
     Type: String
     NoEcho: true
     MinLength: 1
-    Description: "Runner registration token obtained from GitLab UI."
+    Description: >
+      Runner token used for registration.
+      GitLab 14.2 uses a legacy registration token.
+      Newer GitLab versions can use a runner authentication token (glrt-...).
 
   RunnerDescription:
     Type: String
@@ -395,18 +398,30 @@ Resources:
                   chmod 0600 /home/gitlab-runner/.docker/config.json
                 fi
 
-                echo "[user-data] registering runner"
-                gitlab-runner register \
-                  --non-interactive \
-                  --url "${GitLabUrl}" \
-                  --registration-token "${RegistrationToken}" \
-                  --template-config /etc/gitlab-runner/register-template.toml \
-                  --executor "docker" \
-                  --docker-image "${RunnerDefaultDockerImage}" \
-                  --description "${RunnerDescription}" \
-                  --tag-list "${RunnerTags}" \
-                  --locked=${RunnerLocked} \
-                  --run-untagged=${RunnerRunUntagged}
+                if [[ "${RegistrationToken}" == glrt-* ]]; then
+                  echo "[user-data] registering runner with authentication token"
+                  echo "[user-data] runner attributes such as description, tags, locked, and run-untagged must be configured in GitLab UI or API"
+                  gitlab-runner register \
+                    --non-interactive \
+                    --url "${GitLabUrl}" \
+                    --token "${RegistrationToken}" \
+                    --template-config /etc/gitlab-runner/register-template.toml \
+                    --executor "docker" \
+                    --docker-image "${RunnerDefaultDockerImage}"
+                else
+                  echo "[user-data] registering runner with legacy registration token"
+                  gitlab-runner register \
+                    --non-interactive \
+                    --url "${GitLabUrl}" \
+                    --registration-token "${RegistrationToken}" \
+                    --template-config /etc/gitlab-runner/register-template.toml \
+                    --executor "docker" \
+                    --docker-image "${RunnerDefaultDockerImage}" \
+                    --description "${RunnerDescription}" \
+                    --tag-list "${RunnerTags}" \
+                    --locked=${RunnerLocked} \
+                    --run-untagged=${RunnerRunUntagged}
+                fi
 
                 systemctl enable --now gitlab-runner
 

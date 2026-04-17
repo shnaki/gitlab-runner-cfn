@@ -9,8 +9,9 @@ IAM_TEMPLATE   ?= gitlab-runner-iam.yaml
 IAM_PARAMS     ?= parameters-iam.json
 
 AWS        ?= aws
-AWSFLAGS    = --region $(REGION)
+AWSFLAGS    = --region $(REGION) --no-cli-pager
 BASH       ?= bash
+POWERSHELL ?= powershell -NoProfile
 
 .DEFAULT_GOAL := help
 
@@ -18,7 +19,7 @@ BASH       ?= bash
         deploy-iam changeset-iam delete-iam outputs-iam validate-iam
 
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*##"; printf "Usage:\n  make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@$(POWERSHELL) -Command "$$lines = Get-Content '$(firstword $(MAKEFILE_LIST))'; Write-Host 'Usage:'; Write-Host '  make <target>'; Write-Host ''; Write-Host 'Targets:'; foreach ($$line in $$lines) { if ($$line -match '^([a-zA-Z_-]+):.*##\s*(.+)$$') { '{0,-12} {1}' -f $$matches[1], $$matches[2] } }"
 
 validate: ## Validate the CloudFormation template
 	$(AWS) cloudformation validate-template \

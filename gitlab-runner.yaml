@@ -161,8 +161,8 @@ Parameters:
     Type: String
     MinLength: 1
     Description: >
-      IAM スタック (gitlab-runner-iam.yaml) でデプロイ済みの RunnerInstanceProfile ARN。
-      make outputs-iam で確認できます。
+      RunnerInstanceProfile ARN created by the IAM stack (gitlab-runner-iam.yaml).
+      You can retrieve it with make outputs-iam.
 
   # --- Access ---
   KeyPairName:

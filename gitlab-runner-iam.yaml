@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   IAM Role and Instance Profile for GitLab Runner.
-  Requires CAPABILITY_IAM — deploy once with an administrator who has IAM permissions.
+  Requires CAPABILITY_IAM - deploy once with an administrator who has IAM permissions.
   The main stack (gitlab-runner.yaml) can then be deployed without IAM permissions.
 
 # ---------------------------------------------------------------------------
@@ -70,24 +70,37 @@ Resources:
   RunnerRole:
     Type: AWS::IAM::Role
     Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal: { Service: ec2.amazonaws.com }
-            Action: sts:AssumeRole
-          - !If
-            - EnableOidcTrust
+      AssumeRolePolicyDocument: !If
+        - EnableOidcTrust
+        - !Sub |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": { "Service": "ec2.amazonaws.com" },
+                  "Action": "sts:AssumeRole"
+                },
+                {
+                  "Effect": "Allow",
+                  "Principal": { "Federated": "${GitLabOidcProviderArn}" },
+                  "Action": "sts:AssumeRoleWithWebIdentity",
+                  "Condition": {
+                    "StringEquals": {
+                      "${GitLabOidcIssuerHost}:aud": "${GitLabOidcAudience}"
+                    },
+                    "StringLike": {
+                      "${GitLabOidcIssuerHost}:sub": "${GitLabOidcSubjectClaim}"
+                    }
+                  }
+                }
+              ]
+            }
+        - Version: "2012-10-17"
+          Statement:
             - Effect: Allow
-              Principal:
-                Federated: !Ref GitLabOidcProviderArn
-              Action: sts:AssumeRoleWithWebIdentity
-              Condition:
-                StringEquals:
-                  !Sub "${GitLabOidcIssuerHost}:aud": !Ref GitLabOidcAudience
-                StringLike:
-                  !Sub "${GitLabOidcIssuerHost}:sub": !Ref GitLabOidcSubjectClaim
-            - !Ref AWS::NoValue
+              Principal: { Service: ec2.amazonaws.com }
+              Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Policies:

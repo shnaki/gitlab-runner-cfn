@@ -1,4 +1,8 @@
 [
-  { "ParameterKey": "CacheBucketName",       "ParameterValue": "" },
-  { "ParameterKey": "EcrPullRepositoryArns", "ParameterValue": "" }
+  { "ParameterKey": "CacheBucketName",        "ParameterValue": "" },
+  { "ParameterKey": "EcrRepositoryArns",      "ParameterValue": "" },
+  { "ParameterKey": "GitLabOidcProviderArn",  "ParameterValue": "" },
+  { "ParameterKey": "GitLabOidcIssuerHost",   "ParameterValue": "gitlab.com" },
+  { "ParameterKey": "GitLabOidcAudience",     "ParameterValue": "https://gitlab.com" },
+  { "ParameterKey": "GitLabOidcSubjectClaim", "ParameterValue": "" }
 ]

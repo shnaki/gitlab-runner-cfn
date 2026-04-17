@@ -13,19 +13,54 @@ Parameters:
     Default: ""
     Description: "Existing S3 bucket for runner distributed cache. Empty = no S3 policy."
 
-  EcrPullRepositoryArns:
+  EcrRepositoryArns:
     Type: CommaDelimitedList
     Default: ""
     Description: >
-      Comma-separated ECR repository ARNs that the runner may pull from.
-      Leave empty to disable private ECR pull permissions.
+      Comma-separated ECR repository ARNs that the runner may push to and pull from.
+      Leave empty to disable private ECR permissions.
+
+  GitLabOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: >
+      ARN of the GitLab OIDC identity provider in IAM
+      (e.g. arn:aws:iam::123456789012:oidc-provider/gitlab.com).
+      Leave empty to disable OIDC trust.
+
+  GitLabOidcIssuerHost:
+    Type: String
+    Default: "gitlab.com"
+    Description: >
+      Hostname of the GitLab OIDC issuer without the https:// prefix.
+      Used to build the IAM condition key (e.g. "gitlab.com:sub").
+      For self-hosted GitLab use your instance hostname.
+
+  GitLabOidcAudience:
+    Type: String
+    Default: "https://gitlab.com"
+    Description: >
+      Expected aud claim in the GitLab JWT.
+      For self-hosted GitLab use your instance URL without a trailing slash.
+
+  GitLabOidcSubjectClaim:
+    Type: String
+    Default: ""
+    Description: >
+      sub claim pattern (StringLike) to restrict which GitLab projects may assume the role.
+      Example: "project_path:mygroup/myproject:ref_type:branch:ref:main"
+      Wildcards supported: "project_path:mygroup/*:ref_type:branch:ref:*"
+      Leave empty to disable OIDC trust.
 
 # ---------------------------------------------------------------------------
 # Conditions
 # ---------------------------------------------------------------------------
 Conditions:
-  HasCacheBucket: !Not [!Equals [!Ref CacheBucketName, ""]]
-  HasEcrPullRepositories: !Not [!Equals [!Join ["", !Ref EcrPullRepositoryArns], ""]]
+  HasCacheBucket:     !Not [!Equals [!Ref CacheBucketName, ""]]
+  HasEcrRepositories: !Not [!Equals [!Join ["", !Ref EcrRepositoryArns], ""]]
+  HasOidcProvider:    !Not [!Equals [!Ref GitLabOidcProviderArn, ""]]
+  HasOidcSubject:     !Not [!Equals [!Ref GitLabOidcSubjectClaim, ""]]
+  EnableOidcTrust:    !And [!Condition HasOidcProvider, !Condition HasOidcSubject]
 
 # ---------------------------------------------------------------------------
 # Resources
@@ -40,6 +75,18 @@ Resources:
           - Effect: Allow
             Principal: { Service: ec2.amazonaws.com }
             Action: sts:AssumeRole
+          - !If
+            - EnableOidcTrust
+            - Effect: Allow
+              Principal:
+                Federated: !Ref GitLabOidcProviderArn
+              Action: sts:AssumeRoleWithWebIdentity
+              Condition:
+                StringEquals:
+                  !Sub "${GitLabOidcIssuerHost}:aud": !Ref GitLabOidcAudience
+                StringLike:
+                  !Sub "${GitLabOidcIssuerHost}:sub": !Ref GitLabOidcSubjectClaim
+            - !Ref AWS::NoValue
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Policies:
@@ -62,8 +109,8 @@ Resources:
                   Resource: !Sub "arn:${AWS::Partition}:s3:::${CacheBucketName}"
           - !Ref AWS::NoValue
         - !If
-          - HasEcrPullRepositories
-          - PolicyName: runner-ecr-pull
+          - HasEcrRepositories
+          - PolicyName: runner-ecr-push-pull
             PolicyDocument:
               Version: "2012-10-17"
               Statement:
@@ -76,7 +123,11 @@ Resources:
                     - ecr:BatchCheckLayerAvailability
                     - ecr:BatchGetImage
                     - ecr:GetDownloadUrlForLayer
-                  Resource: !Ref EcrPullRepositoryArns
+                    - ecr:PutImage
+                    - ecr:InitiateLayerUpload
+                    - ecr:UploadLayerPart
+                    - ecr:CompleteLayerUpload
+                  Resource: !Ref EcrRepositoryArns
           - !Ref AWS::NoValue
 
   RunnerInstanceProfile:

@@ -149,12 +149,12 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | `RunnerStateVolumeSizeGiB` | - | `20` | `RunnerStateVolumeId` が空のときに作成する state volume のサイズ |
 | `RunnerStateVolumeAvailabilityZone` | - | `""` | 新規 state volume の AZ。通常は `make deploy` / `make changeset` が `SubnetId` から自動補完する |
 | `AmiId` | - | AL2023 の SSM Public Parameter | 上書き可 |
-| `IamStackName` | - | `gitlab-runner-iam` | `RunnerInstanceProfileArn` と `CacheBucketName` を export している IAM スタック名 |
+| `IamStackName` | - | `gitlab-runner-iam` | `RunnerInstanceProfileArn` と既定の `CacheBucketName` を export している IAM スタック名（同一アカウント・同一リージョン前提） |
 | `KeyPairName` | - | `""` | SSH 用 KeyPair（任意） |
 | `AllowedSshCidr` | - | `""` | SSH 許可 CIDR（任意、新規 SG 作成時のみ有効） |
 | `CloudWatchLogsRetentionDays` | - | `30` | CloudWatch Logs の保持日数 |
-| `CacheBucketName` | - | `""` | Runner 分散キャッシュを有効化する S3 バケット名 |
-| `CacheBucketLocation` | - | スタックと同じリージョン | `CacheBucketName` のリージョン。別リージョンの S3 バケットを使う場合に指定 |
+| `CacheBucketName` | - | `""` | 空なら `IamStackName` の IAM スタックが export した `CacheBucketName` を使う。値を指定した場合は export より優先 |
+| `CacheBucketLocation` | - | スタックと同じリージョン | 最終的に使われる `CacheBucketName` のリージョン。キャッシュ未使用時は無視 |
 
 ## `AssignPublicIp` の挙動
 
@@ -264,15 +264,14 @@ IAM スタックの `CacheBucketName` を指定すると、Runner 登録時に S
 { "ParameterKey": "CacheBucketLocation", "ParameterValue": "ap-northeast-1" }
 ```
 
-- メインスタックの `CacheBucketName` が空なら、IAM スタックが export した `CacheBucketName` を自動利用する
+- メインスタックの `CacheBucketName` が空なら、`IamStackName` で指定した IAM スタックが export した `CacheBucketName` を自動利用する
+- メインスタックで `CacheBucketName` を明示した場合は、その値が IAM 側 export より優先される
 - IAM スタックの `CacheBucketName` は S3 権限付与にも使用する
-- `CacheBucketLocation` を省略した場合はスタックのリージョンを使う
+- `CacheBucketLocation` は最終的に使われる `CacheBucketName` に対して適用され、省略時はスタックのリージョンを使う
 - cache の prefix は `gitlab-runner` 固定
 - バケット側には Runner ロールに対する `s3:GetObject` / `s3:PutObject` / `s3:DeleteObject` / `s3:ListBucket` が必要
 
-メインスタックは `RunnerInstanceProfileArn` も IAM スタックの export から取得するため、通常は `parameters.json` に ARN を手入力する必要はない。IAM スタックとメインスタックは同一アカウント・同一リージョンに配置すること。
-
-必要なら `parameters.json` に `CacheBucketName` を明示して IAM 側 export を上書きすることもできるが、通常運用では不要。
+メインスタックは `RunnerInstanceProfileArn` も IAM スタックの export から取得するため、通常は `parameters.json` に ARN を手入力する必要はない。
 
 ## CloudWatch Logs
 

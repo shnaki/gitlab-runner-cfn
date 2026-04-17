@@ -23,6 +23,51 @@ if ! command -v aws >/dev/null 2>&1; then
   exit 1
 fi
 
+tmp_params_file=
+cleanup() {
+  if [ -n "${tmp_params_file:-}" ] && [ -f "$tmp_params_file" ]; then
+    rm -f "$tmp_params_file"
+  fi
+}
+trap cleanup EXIT
+
+param_value() {
+  local key=$1
+  jq -r --arg key "$key" '.[] | select(.ParameterKey == $key) | .ParameterValue' "$params_file" | head -n1
+}
+
+runner_state_volume_id=$(param_value "RunnerStateVolumeId")
+runner_state_volume_az=$(param_value "RunnerStateVolumeAvailabilityZone")
+subnet_id=$(param_value "SubnetId")
+
+if [ -z "$runner_state_volume_id" ] && [ -z "$runner_state_volume_az" ]; then
+  if [ -z "$subnet_id" ]; then
+    echo "ERROR: SubnetId parameter is required to derive RunnerStateVolumeAvailabilityZone" >&2
+    exit 1
+  fi
+
+  runner_state_volume_az=$(aws ec2 describe-subnets \
+    --subnet-ids "$subnet_id" \
+    --region "$region" \
+    --query 'Subnets[0].AvailabilityZone' \
+    --output text)
+
+  if [ -z "$runner_state_volume_az" ] || [ "$runner_state_volume_az" = "None" ]; then
+    echo "ERROR: failed to resolve AvailabilityZone for subnet $subnet_id" >&2
+    exit 1
+  fi
+
+  tmp_params_file=$(mktemp)
+  jq --arg az "$runner_state_volume_az" '
+    if any(.[]; .ParameterKey == "RunnerStateVolumeAvailabilityZone") then
+      map(if .ParameterKey == "RunnerStateVolumeAvailabilityZone" then .ParameterValue = $az else . end)
+    else
+      . + [{ParameterKey: "RunnerStateVolumeAvailabilityZone", ParameterValue: $az}]
+    end
+  ' "$params_file" > "$tmp_params_file"
+  params_file=$tmp_params_file
+fi
+
 stack_exists=false
 if aws cloudformation describe-stacks --stack-name "$stack_name" --region "$region" >/dev/null 2>&1; then
   stack_exists=true

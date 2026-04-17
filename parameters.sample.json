@@ -19,6 +19,9 @@
   { "ParameterKey": "InstanceType",              "ParameterValue": "t3.small" },
   { "ParameterKey": "SpotMaxPrice",              "ParameterValue": "" },
   { "ParameterKey": "VolumeSizeGiB",             "ParameterValue": "50" },
+  { "ParameterKey": "RunnerStateVolumeId",       "ParameterValue": "" },
+  { "ParameterKey": "RunnerStateVolumeSizeGiB",  "ParameterValue": "20" },
+  { "ParameterKey": "RunnerStateVolumeAvailabilityZone", "ParameterValue": "" },
 
   { "ParameterKey": "RunnerInstanceProfileArn",   "ParameterValue": "arn:aws:iam::123456789012:instance-profile/gitlab-runner-iam-RunnerInstanceProfile-XXXXXXXXXXXX" },
 

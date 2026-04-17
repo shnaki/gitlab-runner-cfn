@@ -53,6 +53,7 @@
 ```
 
 - EC2 は常時 1 台（Spot）。中断されると ASG なしのため再作成は手動（または `make delete` → `make deploy`）。
+- `RunnerStateVolumeId` を使うと、`/etc/gitlab-runner` を永続 EBS に退避して同じ runner 登録を引き継げる。未指定時は retained な state volume を新規作成する。
 - **VPC / Subnet は既存を渡す前提**。Private subnet（NAT GW 経由 outbound）と public subnet（IGW + `AssignPublicIp=Yes`）の両方に対応。
 - Security Group は **既存利用** と **新規作成** を切替可能。セルフホスト GitLab 側で固定 SG をホワイトリスト登録しているケースでは、Runner スタックを作り直しても SG ID が変わらないように **外部管理の SG を渡す** 運用を推奨。
 - Public IP の付与は `AssignPublicIp` で制御（デフォルト `No`）。
@@ -91,6 +92,7 @@ make outputs-iam  # RunnerInstanceProfileArn を控えておく
 ```bash
 cp parameters.sample.json parameters.json
 # parameters.json を編集（VpcId / SubnetId / GitLabUrl / RegistrationToken / RunnerInstanceProfileArn など）
+# 初回は RunnerStateVolumeId を空のままにしてよい。make outputs の RunnerStateVolumeIdUsed を控えておくと再利用できる。
 
 make validate
 make deploy
@@ -101,9 +103,11 @@ make session   # SSM Session Manager で接続
 削除:
 
 ```bash
-make delete      # メインスタック
+make delete      # メインスタック（RunnerStateVolumeId 未指定時に作られた state volume は retain される）
 make delete-iam  # IAM スタック（メインスタック削除後）
 ```
+
+再デプロイ時に同じ runner を引き継ぐには、前回の `make outputs` で確認した `RunnerStateVolumeIdUsed` を `parameters.json` の `RunnerStateVolumeId` に設定してから `make deploy` する。
 
 ## IAM スタックのパラメータ一覧
 
@@ -141,6 +145,9 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | `InstanceType` | - | `t3.small` | `t3.nano` / `t3.micro` / `t3.small` / `t3.medium` / `t3.large` / `m6i.large` |
 | `SpotMaxPrice` | - | `""` | Spot 最大価格 USD/時。空ならオンデマンド価格上限 |
 | `VolumeSizeGiB` | - | `50` | ルート EBS サイズ |
+| `RunnerStateVolumeId` | - | `""` | `/etc/gitlab-runner` を保持する既存 EBS volume ID。空なら retained な state volume を新規作成 |
+| `RunnerStateVolumeSizeGiB` | - | `20` | `RunnerStateVolumeId` が空のときに作成する state volume のサイズ |
+| `RunnerStateVolumeAvailabilityZone` | - | `""` | 新規 state volume の AZ。通常は `make deploy` / `make changeset` が `SubnetId` から自動補完する |
 | `AmiId` | - | AL2023 の SSM Public Parameter | 上書き可 |
 | `RunnerInstanceProfileArn` | ✓ | - | IAM スタック (`make outputs-iam`) で確認した `RunnerInstanceProfileArn` |
 | `KeyPairName` | - | `""` | SSH 用 KeyPair（任意） |
@@ -177,6 +184,8 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 
 - これまでどおり project / group / instance の Registration Token を `RegistrationToken` に設定する
 - `RunnerDescription` / `RunnerTags` / `RunnerLocked` / `RunnerRunUntagged` は CloudFormation 側で適用される
+- **重要**: legacy registration token のまま state volume を使わずに再デプロイすると、GitLab 上では別 runner として再登録される
+- 同じ runner を継続したい場合は、`RunnerStateVolumeId` で前回の state volume を再利用する
 
 ### 将来 Authentication Token へ移行する場合
 
@@ -186,6 +195,28 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 4. スタックを更新する
 
 この移行では CloudFormation テンプレート自体の差し替えは不要で、トークン種別の切り替えで新フローに移行できる。
+
+## Persistent runner state (`RunnerStateVolumeId`)
+
+- このテンプレートは `gitlab-runner` の `config.toml` を永続 EBS に置く
+- `RunnerStateVolumeId=""` の場合、スタックが state volume を新規作成し、スタック削除時も **retain** する
+- `make deploy` / `make changeset` は `RunnerStateVolumeId=""` の場合、`SubnetId` から state volume 用 AZ を自動補完する
+- `RunnerStateVolumeId=vol-...` を指定した場合、その既存 volume をアタッチして既存 runner 設定を再利用する
+- 既存 `config.toml` に `[[runners]]` があれば、UserData は `gitlab-runner register` を再実行しない
+- root volume は従来どおり削除される。永続化されるのは runner 状態のみ
+
+### 推奨フロー
+
+1. 初回デプロイでは `RunnerStateVolumeId` を空にする
+2. `make outputs` で `RunnerStateVolumeIdUsed` を控える
+3. Spot 中断や `make delete` 後に再作成するときは、その volume ID を `RunnerStateVolumeId` に設定して再デプロイする
+
+### 注意点
+
+- retained volume は CloudFormation が自動再利用しない。再利用したい場合は **明示的に** `RunnerStateVolumeId` を設定する
+- `make` を使わずに CloudFormation を直接叩く場合は、新規 state volume 用に `RunnerStateVolumeAvailabilityZone` も明示する
+- EBS volume は EC2 と同じ Availability Zone にしかアタッチできない。別 AZ の subnet に切り替える場合は同じ volume を再利用できない
+- `RunnerConcurrent` は起動時に既存 `config.toml` のトップレベル設定を更新するが、runner 自体の登録情報は保持される
 
 ## Security Group モード
 
@@ -356,6 +387,7 @@ aws logs tail /gitlab-runner/runner --follow --region ap-northeast-1
 - **Registration token は UserData に埋め込まれる**。`ec2:DescribeInstanceAttribute` 権限を持つ者は取得可能。
 - **Registration token 方式は GitLab 16.6 以降で非推奨**。長期運用では、GitLab UI で事前に取得する **Runner Authentication Token** + SSM Parameter Store への移行を推奨。
 - **Spot 中断時にジョブは中断される**。本テンプレートは単一 EC2 のため自動復旧しない。
+- **runner state volume には `/etc/gitlab-runner/config.toml` が残る**。再利用時は runner token を含む設定を引き継ぐため、不要になった volume は適切に破棄すること。
 - EBS は暗号化（gp3）。IMDS は v2 強制。
 - `EcrRepositoryArns` を広く取りすぎると Runner が操作できる ECR 範囲も広がる。必要最小限の repository ARN に絞ること。
 
@@ -375,6 +407,8 @@ sudo cat /etc/gitlab-runner/config.toml
 - **`cfn-signal` タイムアウト**: UserData が 15 分以内に終わらなかった。`/var/log/cloud-init-output.log` と `/var/log/user-data.log` を確認。outbound 不通が典型原因。
 - **outbound できない**: private subnet なら NAT GW ルートがあるか、public subnet なら `AssignPublicIp=Yes` と IGW ルートがあるか、SG egress が `0.0.0.0/0` allow か確認。
 - **GitLab 側に Runner が現れない**: `GitLabUrl` 末尾 `/`、トークン、ネットワーク到達性（SG / ルーティング）を確認。
+- **再デプロイ後に別 runner が増えた**: 前回の `RunnerStateVolumeIdUsed` を `RunnerStateVolumeId` に渡さずに新規 state volume で起動している可能性が高い。
+- **state volume を再利用できない**: `RunnerStateVolumeId` の volume が runner を置く subnet と別 Availability Zone の可能性がある。
 - **docker ジョブが権限エラー**: DinD を使うなら `RunnerPrivileged=true`。
 - **private ECR イメージを pull できない**: IAM スタックの `EcrRepositoryArns` に対象 repo ARN が入っているか、`EcrDockerRegistries` に registry host が入っているか、クロスアカウントなら相手先 ECR repository policy が Runner ロールを許可しているかを確認。
 - **OIDC AssumeRole が失敗する**: `GitLabOidcAudience` が `.gitlab-ci.yml` の `aud:` と一致しているか、`GitLabOidcSubjectClaim` のパターンがジョブの `sub` クレームと一致しているかを確認。

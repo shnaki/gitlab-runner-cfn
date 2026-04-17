@@ -22,6 +22,9 @@
                  │          NAT Gateway ──► Internet    │
                  │     (DockerHub / packages / ssm)     │
                  └──────────────────────────────────────┘
+                               │ logs
+                               ▼
+                      CloudWatch Logs
 ```
 
 - EC2 は常時 1 台（Spot）。中断されると ASG なしのため再作成は手動（または `make delete` → `make deploy`）。
@@ -29,12 +32,14 @@
 - Security Group は **既存利用** と **新規作成** を切替可能。セルフホスト GitLab 側で固定 SG をホワイトリスト登録しているケースでは、Runner スタックを作り直しても SG ID が変わらないように **外部管理の SG を渡す** 運用を推奨。
 - Public IP の付与は `AssignPublicIp` で制御（デフォルト `No`）。
 - EC2 には SSM Session Manager でアクセス（`AmazonSSMManagedInstanceCore`）。SSH は任意。
-- private ECR を `.gitlab-ci.yml` の `image:` で使う場合、Runner EC2 ロールに pull 権限を付与し、`amazon-ecr-credential-helper` を自動設定できる。
+- IAM ロールは **別スタック** (`gitlab-runner-iam.yaml`) で管理する。これにより IAM 権限を持つ管理者のみが IAM 変更を担当でき、メインスタックのデプロイには IAM 権限が不要になる。
+- private ECR のイメージを `.gitlab-ci.yml` の `image:` で使う場合、IAM スタックの `EcrRepositoryArns` で pull 権限を付与し、`EcrDockerRegistries` で `amazon-ecr-credential-helper` を自動設定できる。
 
 ## 前提条件
 
 - AWS CLI v2、`jq`、`make`
-- CloudFormation / EC2 / IAM の権限
+- CloudFormation / EC2 権限（メインスタック）
+- CloudFormation / IAM 権限（IAM スタック — 初回のみ）
 - セルフホスト GitLab で取得済みの Runner **Registration Token**
 - Runner を置くサブネットから下記への到達性:
   - GitLab サーバ（VPC 内 / Peering / TGW / DX など）
@@ -42,9 +47,22 @@
 
 ## クイックスタート
 
+### ステップ 1: IAM スタックをデプロイ（初回のみ・IAM 権限が必要）
+
+```bash
+cp parameters-iam.sample.json parameters-iam.json
+# parameters-iam.json を編集（S3/ECR/OIDC を使う場合のみ値を設定）
+
+make validate-iam
+make deploy-iam
+make outputs-iam  # RunnerInstanceProfileArn を控えておく
+```
+
+### ステップ 2: メインスタックをデプロイ
+
 ```bash
 cp parameters.sample.json parameters.json
-# parameters.json を編集（VpcId / SubnetId / GitLabUrl / RegistrationToken など）
+# parameters.json を編集（VpcId / SubnetId / GitLabUrl / RegistrationToken / RunnerInstanceProfileArn など）
 
 make validate
 make deploy
@@ -55,10 +73,26 @@ make session   # SSM Session Manager で接続
 削除:
 
 ```bash
-make delete
+make delete      # メインスタック
+make delete-iam  # IAM スタック（メインスタック削除後）
 ```
 
-## パラメータ一覧
+## IAM スタックのパラメータ一覧
+
+`gitlab-runner-iam.yaml` のパラメータ。変更後は `make deploy-iam` または `make changeset-iam` で適用する。
+
+| 名前 | 必須 | デフォルト | 説明 |
+|---|---|---|---|
+| `CacheBucketName` | - | `""` | Runner 分散キャッシュ用 S3 バケット名。空なら S3 権限なし |
+| `EcrRepositoryArns` | - | `""` | push / pull を許可する ECR repository ARN（カンマ区切り）。空なら ECR 権限なし |
+| `GitLabOidcProviderArn` | - | `""` | GitLab OIDC provider の ARN。空なら OIDC trust なし |
+| `GitLabOidcIssuerHost` | - | `gitlab.com` | GitLab OIDC issuer のホスト名（`https://` 除く）。セルフホストの場合は自インスタンスのホスト名 |
+| `GitLabOidcAudience` | - | `https://gitlab.com` | JWT の `aud` クレーム。セルフホストの場合はインスタンス URL（末尾スラッシュなし） |
+| `GitLabOidcSubjectClaim` | - | `""` | `sub` クレームの StringLike パターン。空なら OIDC trust なし |
+
+## メインスタックのパラメータ一覧
+
+`gitlab-runner.yaml` のパラメータ。
 
 | 名前 | 必須 | デフォルト | 説明 |
 |---|---|---|---|
@@ -72,7 +106,6 @@ make delete
 | `RunnerTags` | - | `aws,docker` | Runner タグ（カンマ区切り） |
 | `RunnerConcurrent` | - | `2` | 同時実行ジョブ数 |
 | `RunnerDefaultDockerImage` | - | `alpine:latest` | デフォルト Docker イメージ |
-| `EcrPullRepositoryArns` | - | `""` | pull を許可する ECR repository ARN（カンマ区切り）。空なら ECR pull 権限なし |
 | `EcrDockerRegistries` | - | `""` | Docker credential helper を有効化する ECR registry host（カンマ区切り） |
 | `RunnerPrivileged` | - | `false` | privileged モード（DinD 用途なら `true`） |
 | `RunnerLocked` | - | `true` | 現プロジェクトにロック |
@@ -81,8 +114,10 @@ make delete
 | `SpotMaxPrice` | - | `""` | Spot 最大価格 USD/時。空ならオンデマンド価格上限 |
 | `VolumeSizeGiB` | - | `50` | ルート EBS サイズ |
 | `AmiId` | - | AL2023 の SSM Public Parameter | 上書き可 |
+| `RunnerInstanceProfileArn` | ✓ | - | IAM スタック (`make outputs-iam`) で確認した `RunnerInstanceProfileArn` |
 | `KeyPairName` | - | `""` | SSH 用 KeyPair（任意） |
 | `AllowedSshCidr` | - | `""` | SSH 許可 CIDR（任意、新規 SG 作成時のみ有効） |
+| `CloudWatchLogsRetentionDays` | - | `30` | CloudWatch Logs の保持日数 |
 | `CacheBucketName` | - | `""` | Runner 分散キャッシュを有効化する S3 バケット名 |
 | `CacheBucketLocation` | - | スタックと同じリージョン | `CacheBucketName` のリージョン。別リージョンの S3 バケットを使う場合に指定 |
 
@@ -129,13 +164,20 @@ make delete
 
 同一アカウント・クロスアカウントを問わず、Runner が private ECR からビルド用イメージを pull するには以下を設定する。
 
+`parameters-iam.json`:
+
 ```json
-{ "ParameterKey": "EcrPullRepositoryArns", "ParameterValue": "arn:aws:ecr:ap-northeast-1:111111111111:repository/base-ci,arn:aws:ecr:ap-northeast-1:222222222222:repository/shared-ci" },
-{ "ParameterKey": "EcrDockerRegistries",   "ParameterValue": "111111111111.dkr.ecr.ap-northeast-1.amazonaws.com,222222222222.dkr.ecr.ap-northeast-1.amazonaws.com" }
+{ "ParameterKey": "EcrRepositoryArns", "ParameterValue": "arn:aws:ecr:ap-northeast-1:111111111111:repository/base-ci,arn:aws:ecr:ap-northeast-1:222222222222:repository/shared-ci" }
 ```
 
-- `EcrPullRepositoryArns` は Runner EC2 ロールに `ecr:GetAuthorizationToken` と対象 repository の pull 権限を付与する
-- `EcrDockerRegistries` を指定すると、指定した registry host ごとに `credHelpers` を設定する
+`parameters.json`:
+
+```json
+{ "ParameterKey": "EcrDockerRegistries", "ParameterValue": "111111111111.dkr.ecr.ap-northeast-1.amazonaws.com,222222822222.dkr.ecr.ap-northeast-1.amazonaws.com" }
+```
+
+- `EcrRepositoryArns`（IAM スタック）は Runner EC2 ロールに `ecr:GetAuthorizationToken` と対象 repository の pull 権限を付与する
+- `EcrDockerRegistries`（メインスタック）を指定すると、指定した registry host ごとに `credHelpers` を設定する
 - `image:` で指定するイメージは、上記 registry / repository に一致している必要がある
 
 `.gitlab-ci.yml` の例:
@@ -160,31 +202,29 @@ build:
 
 `ecr:GetAuthorizationToken` は Runner 側 IAM ロールに対して `Resource: "*"` で許可される。
 
-## ECR push は GitLab OIDC を使う
+## ECR push を Runner EC2 ロールで行う
 
-このテンプレートは ECR push 権限を Runner EC2 ロールに付与しない。push は各ジョブが GitLab OIDC で AWS IAM Role を AssumeRole して行う前提。
+`EcrRepositoryArns`（IAM スタック）は push 権限も含む。Runner EC2 ロールで直接 push したい場合は、対象 repository ARN を指定するだけで動作する。
 
-前提:
+セキュリティを重視する場合は後述の **GitLab OIDC** 方式を使い、push 権限を特定のプロジェクト・ブランチに限定することを推奨。
 
-- AWS 側で GitLab OIDC provider を作成済み
-- push 用 IAM Role の trust policy で対象 GitLab project / branch / tag 条件を制限済み
-- push 用 IAM Role に `ecr:InitiateLayerUpload` などの push 権限を付与済み
+## GitLab OIDC で AssumeRole する
 
-## S3 分散キャッシュを使う
+IAM スタックは GitLab OIDC provider との trust を設定できる。これにより各ジョブが Runner EC2 ロールとは別の IAM Role を AssumeRole でき、push 権限などをプロジェクト・ブランチ単位で制限できる。
 
-`CacheBucketName` を指定すると、Runner 登録時に S3 distributed cache を有効化する。認証は EC2 インスタンスロールを使う。
+`parameters-iam.json`:
 
 ```json
-{ "ParameterKey": "CacheBucketName",     "ParameterValue": "my-runner-cache" },
-{ "ParameterKey": "CacheBucketLocation", "ParameterValue": "ap-northeast-1" }
+{ "ParameterKey": "GitLabOidcProviderArn",  "ParameterValue": "arn:aws:iam::111111111111:oidc-provider/gitlab.example.com" },
+{ "ParameterKey": "GitLabOidcIssuerHost",   "ParameterValue": "gitlab.example.com" },
+{ "ParameterKey": "GitLabOidcAudience",     "ParameterValue": "https://gitlab.example.com" },
+{ "ParameterKey": "GitLabOidcSubjectClaim", "ParameterValue": "project_path:mygroup/myproject:ref_type:branch:ref:main" }
 ```
 
-- `CacheBucketLocation` を省略した場合はスタックのリージョンを使う
-- 別リージョンの S3 バケットを使う場合は `CacheBucketLocation` を明示する
-- cache の prefix は `gitlab-runner` 固定
-- バケット側には Runner ロールに対する `s3:GetObject` / `s3:PutObject` / `s3:DeleteObject` / `s3:ListBucket` が必要
+- `GitLabOidcProviderArn` と `GitLabOidcSubjectClaim` の両方を指定した場合にのみ OIDC trust が有効になる
+- `GitLabOidcSubjectClaim` はワイルドカード対応: `"project_path:mygroup/*:ref_type:branch:ref:*"`
 
-`.gitlab-ci.yml` の最小例:
+`.gitlab-ci.yml` の ECR push 例:
 
 ```yaml
 push-image:
@@ -193,10 +233,10 @@ push-image:
     - docker:27-dind
   id_tokens:
     GITLAB_OIDC_TOKEN:
-      aud: sts.amazonaws.com
+      aud: https://gitlab.example.com
   variables:
     AWS_REGION: ap-northeast-1
-    AWS_ROLE_ARN: arn:aws:iam::111111111111:role/gitlab-ecr-push
+    AWS_ROLE_ARN: arn:aws:iam::111111111111:role/gitlab-runner-iam-RunnerRole-XXXXXXXXXXXX
     ECR_REGISTRY: 111111111111.dkr.ecr.ap-northeast-1.amazonaws.com
     ECR_REPOSITORY: app
     IMAGE_TAG: $CI_COMMIT_SHA
@@ -216,13 +256,50 @@ push-image:
 
 この例で `docker build` / `docker push` を行う場合は `RunnerPrivileged=true` を有効にして DinD を使う。
 
+## S3 分散キャッシュを使う
+
+`CacheBucketName` を両スタックに指定すると、Runner 登録時に S3 distributed cache を有効化する。認証は EC2 インスタンスロールを使う。
+
+`parameters-iam.json`:
+
+```json
+{ "ParameterKey": "CacheBucketName", "ParameterValue": "my-runner-cache" }
+```
+
+`parameters.json`:
+
+```json
+{ "ParameterKey": "CacheBucketName",     "ParameterValue": "my-runner-cache" },
+{ "ParameterKey": "CacheBucketLocation", "ParameterValue": "ap-northeast-1" }
+```
+
+- IAM スタックの `CacheBucketName` は S3 権限付与に使用する
+- メインスタックの `CacheBucketName` / `CacheBucketLocation` は `config.toml` の cache 設定に使用する
+- `CacheBucketLocation` を省略した場合はスタックのリージョンを使う
+- cache の prefix は `gitlab-runner` 固定
+- バケット側には Runner ロールに対する `s3:GetObject` / `s3:PutObject` / `s3:DeleteObject` / `s3:ListBucket` が必要
+
+## CloudWatch Logs
+
+Runner の以下ログが自動的に CloudWatch Logs に送信される:
+
+- `/var/log/user-data.log` → `{InstanceId}/user-data`
+- `gitlab-runner.service` (journald) → `{InstanceId}/gitlab-runner`
+
+ログは `/${StackName}/runner` ロググループに収集される。保持日数は `CloudWatchLogsRetentionDays` で制御（デフォルト 30 日）。
+
+```bash
+# ログの確認（AWS Console の CloudWatch Logs を使うか CLI で）
+aws logs tail /gitlab-runner/runner --follow --region ap-northeast-1
+```
+
 ## セキュリティ上の注意
 
 - **Registration token は UserData に埋め込まれる**。`ec2:DescribeInstanceAttribute` 権限を持つ者は取得可能。
 - **Registration token 方式は GitLab 16.6 以降で非推奨**。長期運用では、GitLab UI で事前に取得する **Runner Authentication Token** + SSM Parameter Store への移行を推奨。
 - **Spot 中断時にジョブは中断される**。本テンプレートは単一 EC2 のため自動復旧しない。
 - EBS は暗号化（gp3）。IMDS は v2 強制。
-- `EcrPullRepositoryArns` を広く取りすぎると Runner が pull できる ECR 範囲も広がる。必要最小限の repository ARN に絞ること。
+- `EcrRepositoryArns` を広く取りすぎると Runner が操作できる ECR 範囲も広がる。必要最小限の repository ARN に絞ること。
 
 ## トラブルシュート
 
@@ -241,11 +318,14 @@ sudo cat /etc/gitlab-runner/config.toml
 - **outbound できない**: サブネットに NAT GW ルートがあるか、SG egress が `0.0.0.0/0` allow か、`AssignPublicIp` の設定がサブネット種別と整合しているかを確認。
 - **GitLab 側に Runner が現れない**: `GitLabUrl` 末尾 `/`、トークン、ネットワーク到達性（SG / ルーティング）を確認。
 - **docker ジョブが権限エラー**: DinD を使うなら `RunnerPrivileged=true`。
-- **private ECR イメージを pull できない**: `EcrPullRepositoryArns` に対象 repo ARN が入っているか、`EcrDockerRegistries` に registry host が入っているか、クロスアカウントなら相手先 ECR repository policy が Runner ロールを許可しているかを確認。
+- **private ECR イメージを pull できない**: IAM スタックの `EcrRepositoryArns` に対象 repo ARN が入っているか、`EcrDockerRegistries` に registry host が入っているか、クロスアカウントなら相手先 ECR repository policy が Runner ロールを許可しているかを確認。
+- **OIDC AssumeRole が失敗する**: `GitLabOidcAudience` が `.gitlab-ci.yml` の `aud:` と一致しているか、`GitLabOidcSubjectClaim` のパターンがジョブの `sub` クレームと一致しているかを確認。
 
 ## ファイル
 
-- `gitlab-runner.yaml` — CloudFormation テンプレート
-- `parameters.sample.json` — パラメータのサンプル（コピーして `parameters.json` に）
-- `Makefile` — `validate` / `deploy` / `changeset` / `outputs` / `session` / `delete`
+- `gitlab-runner-iam.yaml` — IAM ロール / インスタンスプロファイル用 CloudFormation テンプレート（`CAPABILITY_IAM` が必要）
+- `gitlab-runner.yaml` — メイン CloudFormation テンプレート（IAM 権限不要）
+- `parameters-iam.sample.json` — IAM スタック用パラメータのサンプル
+- `parameters.sample.json` — メインスタック用パラメータのサンプル（コピーして `parameters.json` に）
+- `Makefile` — `validate` / `deploy` / `changeset` / `outputs` / `session` / `delete` および各 `-iam` バリアント
 - `scripts/cfn-deploy.sh` — JSON パラメータを安全に扱う create/update/change-set ラッパー

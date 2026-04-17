@@ -1,9 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  GitLab Runner 用 IAM ロール / インスタンスプロファイルを作成します。
-  このテンプレートは CAPABILITY_IAM が必要なため、IAM 権限を持つ管理者が
-  一度だけデプロイしてください。
-  メインスタック (gitlab-runner.yaml) は IAM 権限なしでデプロイできます。
+  IAM Role and Instance Profile for GitLab Runner.
+  Requires CAPABILITY_IAM — deploy once with an administrator who has IAM permissions.
+  The main stack (gitlab-runner.yaml) can then be deployed without IAM permissions.
 
 # ---------------------------------------------------------------------------
 # Parameters
@@ -12,14 +11,14 @@ Parameters:
   CacheBucketName:
     Type: String
     Default: ""
-    Description: "Runner の分散キャッシュに使う既存 S3 バケット名。空の場合は S3 ポリシーを付与しません。"
+    Description: "Existing S3 bucket for runner distributed cache. Empty = no S3 policy."
 
   EcrPullRepositoryArns:
     Type: CommaDelimitedList
     Default: ""
     Description: >
-      Runner に pull を許可する ECR repository ARN。カンマ区切りで指定します。
-      空の場合は private ECR の pull 権限を付与しません。
+      Comma-separated ECR repository ARNs that the runner may pull from.
+      Leave empty to disable private ECR pull permissions.
 
 # ---------------------------------------------------------------------------
 # Conditions
@@ -90,13 +89,13 @@ Resources:
 # ---------------------------------------------------------------------------
 Outputs:
   RunnerInstanceProfileArn:
-    Description: "RunnerInstanceProfile の ARN。メインスタック (gitlab-runner.yaml) の RunnerInstanceProfileArn パラメータに指定します。"
+    Description: "ARN of the RunnerInstanceProfile. Pass this to the RunnerInstanceProfileArn parameter of gitlab-runner.yaml."
     Value: !GetAtt RunnerInstanceProfile.Arn
     Export:
       Name: !Sub "${AWS::StackName}-InstanceProfileArn"
 
   RunnerRoleArn:
-    Description: "RunnerRole の ARN"
+    Description: "ARN of the RunnerRole"
     Value: !GetAtt RunnerRole.Arn
     Export:
       Name: !Sub "${AWS::StackName}-RoleArn"

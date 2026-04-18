@@ -121,6 +121,11 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 |---|---|---|---|
 | `CacheBucketName` | - | `""` | Runner 分散キャッシュ用 S3 バケット名。空なら S3 権限なし |
 | `EcrRepositoryArns` | - | `""` | 既存 private ECR repository への push / pull を許可する repository ARN または ARN パターン（カンマ区切り）。空なら ECR 権限なし |
+| `GitLabOidcProviderArn` | - | `""` | IAM に登録済みの GitLab OIDC プロバイダ ARN（例: `arn:aws:iam::123456789012:oidc-provider/gitlab.com`）。GitLab 15.7+ の `id_tokens` キーワードが必須。`GitLabOidcSubjectClaim` と両方を設定した場合のみ OIDC trust が有効になる |
+| `GitLabOidcIssuerHost` | - | `gitlab.com` | OIDC issuer のホスト名（`https://` なし）。gitlab.com を使う場合は変更不要。セルフホスト GitLab の場合はインスタンスのホスト名を指定 |
+| `GitLabOidcAudience` | - | `https://gitlab.com` | GitLab JWT の `aud` クレーム。gitlab.com を使う場合は変更不要。セルフホストの場合はインスタンス URL（末尾スラッシュなし） |
+| `GitLabOidcSubjectClaim` | - | `""` | ロールを引き受けられるプロジェクトを制限する `sub` クレームパターン（StringLike、ワイルドカード可）。例: `project_path:mygroup/*:ref_type:branch:ref:*`。`GitLabOidcProviderArn` と両方を設定した場合のみ OIDC trust が有効になる |
+| `RunnerStackName` | - | `gitlab-runner` | メインスタック (`gitlab-runner.yaml`) の名前。IAM ポリシーの CloudWatch Logs 権限スコープ（ロググループ名）の解決に使用する |
 
 ## メインスタックのパラメータ一覧
 

@@ -112,6 +112,7 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 
 - この README は **Runner 構築者向け**。CloudFormation スタックの前提、デプロイ、パラメータ、運用保守だけを扱う。
 - GitLab 14.2 での AWS 認証方針、Runner の使い分け、`.gitlab-ci.yml` の運用例、OIDC の制約は [docs/gitlab-14-2-aws-auth.md](docs/gitlab-14-2-aws-auth.md) を参照。
+- EC2 起動時に UserData スクリプトが実行する処理の一覧は [docs/userdata-steps.md](docs/userdata-steps.md) を参照。
 
 ## IAM スタックのパラメータ一覧
 

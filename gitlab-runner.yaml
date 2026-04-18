@@ -557,7 +557,8 @@ Resources:
                             "file_path": "/var/log/user-data.log",
                             "log_group_name": "/${AWS::StackName}/runner",
                             "log_stream_name": "{instance_id}/user-data",
-                            "timezone": "UTC"
+                            "timezone": "UTC",
+                            "initial_position": "beginning"
                           },
                           {
                             "file_path": "/var/log/gitlab-runner.log",

@@ -1,0 +1,9 @@
+# Parameter files
+parameters.json
+parameters-iam.json
+
+# IntelliJ project files
+.idea
+*.iml
+out
+gen

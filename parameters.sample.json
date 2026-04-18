@@ -6,12 +6,11 @@
   { "ParameterKey": "ExistingSecurityGroupIds",  "ParameterValue": "" },
 
   { "ParameterKey": "GitLabUrl",                 "ParameterValue": "https://gitlab.example.com/" },
-  { "ParameterKey": "RegistrationToken",         "ParameterValue": "REPLACE_ME" },
+  { "ParameterKey": "RegistrationToken",         "ParameterValue": "REPLACE_ME_REGISTRATION_OR_GLRT_TOKEN" },
   { "ParameterKey": "RunnerDescription",         "ParameterValue": "cfn-gitlab-runner" },
   { "ParameterKey": "RunnerTags",                "ParameterValue": "aws,docker" },
   { "ParameterKey": "RunnerConcurrent",          "ParameterValue": "2" },
   { "ParameterKey": "RunnerDefaultDockerImage",  "ParameterValue": "alpine:latest" },
-  { "ParameterKey": "EcrPullRepositoryArns",     "ParameterValue": "" },
   { "ParameterKey": "EcrDockerRegistries",       "ParameterValue": "" },
   { "ParameterKey": "RunnerPrivileged",          "ParameterValue": "false" },
   { "ParameterKey": "RunnerLocked",              "ParameterValue": "true" },
@@ -20,10 +19,14 @@
   { "ParameterKey": "InstanceType",              "ParameterValue": "t3.small" },
   { "ParameterKey": "SpotMaxPrice",              "ParameterValue": "" },
   { "ParameterKey": "VolumeSizeGiB",             "ParameterValue": "50" },
+  { "ParameterKey": "RunnerStateVolumeId",       "ParameterValue": "" },
+  { "ParameterKey": "RunnerStateVolumeSizeGiB",  "ParameterValue": "20" },
+  { "ParameterKey": "RunnerStateVolumeAvailabilityZone", "ParameterValue": "" },
+
+  { "ParameterKey": "IamStackName",               "ParameterValue": "gitlab-runner-iam" },
 
   { "ParameterKey": "KeyPairName",               "ParameterValue": "" },
   { "ParameterKey": "AllowedSshCidr",            "ParameterValue": "" },
 
-  { "ParameterKey": "CacheBucketName",           "ParameterValue": "" },
   { "ParameterKey": "CacheBucketLocation",       "ParameterValue": "" }
 ]

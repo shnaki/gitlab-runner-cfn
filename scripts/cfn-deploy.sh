@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export AWS_PAGER=
 
 if [ "$#" -lt 5 ] || [ "$#" -gt 6 ]; then
   echo "usage: $0 <deploy|changeset> <stack-name> <region> <template-file> <params-file> [change-set-name]" >&2
@@ -23,6 +24,64 @@ if ! command -v aws >/dev/null 2>&1; then
   exit 1
 fi
 
+tmp_params_file=
+cleanup() {
+  if [ -n "${tmp_params_file:-}" ] && [ -f "$tmp_params_file" ]; then
+    rm -f "$tmp_params_file"
+  fi
+}
+trap cleanup EXIT
+
+param_value() {
+  local key=$1
+  jq -r --arg key "$key" '.[] | select(.ParameterKey == $key) | .ParameterValue' "$params_file" | head -n1
+}
+
+template_param_keys=$(aws cloudformation validate-template \
+  --template-body "file://$template_file" \
+  --region "$region" \
+  --query 'Parameters[].ParameterKey' \
+  --output json)
+
+template_has_param() {
+  local key=$1
+  jq -e --arg key "$key" 'index($key) != null' <<<"$template_param_keys" >/dev/null
+}
+
+if template_has_param "RunnerStateVolumeAvailabilityZone"; then
+  runner_state_volume_id=$(param_value "RunnerStateVolumeId")
+  runner_state_volume_az=$(param_value "RunnerStateVolumeAvailabilityZone")
+  subnet_id=$(param_value "SubnetId")
+
+  if [ -z "$runner_state_volume_id" ] && [ -z "$runner_state_volume_az" ]; then
+    if [ -z "$subnet_id" ]; then
+      echo "ERROR: SubnetId parameter is required to derive RunnerStateVolumeAvailabilityZone" >&2
+      exit 1
+    fi
+
+    runner_state_volume_az=$(aws ec2 describe-subnets \
+      --subnet-ids "$subnet_id" \
+      --region "$region" \
+      --query 'Subnets[0].AvailabilityZone' \
+      --output text)
+
+    if [ -z "$runner_state_volume_az" ] || [ "$runner_state_volume_az" = "None" ]; then
+      echo "ERROR: failed to resolve AvailabilityZone for subnet $subnet_id" >&2
+      exit 1
+    fi
+
+    tmp_params_file=$(mktemp)
+    jq --arg az "$runner_state_volume_az" '
+      if any(.[]; .ParameterKey == "RunnerStateVolumeAvailabilityZone") then
+        map(if .ParameterKey == "RunnerStateVolumeAvailabilityZone" then .ParameterValue = $az else . end)
+      else
+        . + [{ParameterKey: "RunnerStateVolumeAvailabilityZone", ParameterValue: $az}]
+      end
+    ' "$params_file" > "$tmp_params_file"
+    params_file=$tmp_params_file
+  fi
+fi
+
 stack_exists=false
 if aws cloudformation describe-stacks --stack-name "$stack_name" --region "$region" >/dev/null 2>&1; then
   stack_exists=true
@@ -32,9 +91,11 @@ base_args=(
   --stack-name "$stack_name"
   --template-body "file://$template_file"
   --parameters "file://$params_file"
-  --capabilities CAPABILITY_IAM
   --region "$region"
 )
+if [ -n "${CFN_CAPABILITIES:-}" ]; then
+  base_args+=(--capabilities "$CFN_CAPABILITIES")
+fi
 
 if [ "$mode" = "changeset" ]; then
   if [ -z "$change_set_name" ]; then
@@ -52,10 +113,28 @@ if [ "$mode" = "changeset" ]; then
     --change-set-name "$change_set_name" \
     --change-set-type "$change_set_type"
 
+  set +e
   aws cloudformation wait change-set-create-complete \
     --stack-name "$stack_name" \
     --change-set-name "$change_set_name" \
-    --region "$region"
+    --region "$region" 2>/dev/null
+  wait_status=$?
+  set -e
+
+  if [ "$wait_status" -ne 0 ]; then
+    cs_reason=$(aws cloudformation describe-change-set \
+      --stack-name "$stack_name" \
+      --change-set-name "$change_set_name" \
+      --region "$region" \
+      --query 'StatusReason' \
+      --output text)
+    if grep -qi "didn't contain changes" <<<"$cs_reason"; then
+      echo "No changes to be deployed."
+      exit 0
+    fi
+    echo "$cs_reason" >&2
+    exit "$wait_status"
+  fi
 
   aws cloudformation describe-change-set \
     --stack-name "$stack_name" \
@@ -91,6 +170,7 @@ if [ "$stack_exists" = true ]; then
   exit 0
 fi
 
+base_args+=(--disable-rollback)
 aws cloudformation create-stack "${base_args[@]}"
 aws cloudformation wait stack-create-complete --stack-name "$stack_name" --region "$region"
 aws cloudformation describe-stacks --stack-name "$stack_name" --region "$region" --query 'Stacks[0].StackStatus'

@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  既存の VPC/Subnet に、単一の Spot EC2 インスタンスとして
-  GitLab Runner (Docker executor) を構築します。
-  Security Group はこのテンプレートで作成するか、既存のものを再利用できます。
+  GitLab Runner (Docker executor) on a single Spot EC2 instance.
+  Targets an existing VPC/Subnet. Supports both private subnets (NAT Gateway)
+  and public subnets (Internet Gateway with AssignPublicIp=Yes).
+  Security Group can be either created here or reused from outside.
 
 # ---------------------------------------------------------------------------
 # Parameters
@@ -11,98 +12,97 @@ Parameters:
   # --- Network (existing VPC required) ---
   VpcId:
     Type: AWS::EC2::VPC::Id
-    Description: "Runner を配置する既存 VPC の ID。"
+    Description: "Existing VPC ID to deploy the runner into."
 
   SubnetId:
     Type: AWS::EC2::Subnet::Id
     Description: >
-      既存 Subnet の ID。通常は GitLab、パッケージリポジトリ、
-      Docker Hub へ outbound できる NAT Gateway 付き private subnet を指定します。
+      Existing Subnet ID.
+      - Private subnet: requires NAT Gateway route for outbound.
+      - Public subnet: set AssignPublicIp=Yes to assign a public IP via IGW.
 
   AssignPublicIp:
     Type: String
     AllowedValues: ["Yes", "No", "SubnetDefault"]
     Default: "No"
     Description: >
-      Runner の ENI に public IPv4 を関連付けるかを指定します。
-      - No (デフォルト): public IP を付与しません。別の outbound 経路
-        (NAT Gateway / VPC Endpoint) が必要です。
-      - Yes: public IP を強制的に付与します。subnet に IGW への経路が必要です。
-      - SubnetDefault: subnet の MapPublicIpOnLaunch 設定に従います。
+      Whether to associate a public IPv4 address to the runner ENI.
+      - No (default): never assign a public IP. Requires the subnet to have
+        an alternative egress path (NAT Gateway / VPC endpoints).
+      - Yes: force-assign a public IP (subnet must have IGW route).
+      - SubnetDefault: defer to the subnet's MapPublicIpOnLaunch setting.
 
   # --- Security Group ---
   ExistingSecurityGroupIds:
     Type: CommaDelimitedList
     Default: ""
     Description: >
-      Runner に付与する既存 Security Group ID をカンマ区切りで指定します。
-      指定した場合は新しい SG を作成しません。空の場合はこのスタックで SG を作成します。
+      Comma-separated existing Security Group IDs to attach to the runner.
+      When provided, a new SG is NOT created (useful when the self-hosted
+      GitLab server has allowlisted a specific SG ID that you don't want to
+      rotate). Leave empty to have this stack create its own SG.
 
   # --- GitLab Runner ---
   GitLabUrl:
     Type: String
     Default: "https://gitlab.example.com/"
-    Description: "セルフホスト GitLab の URL。末尾は / で終える必要があります。"
+    Description: "Self-hosted GitLab URL (must end with /)."
 
   RegistrationToken:
     Type: String
     NoEcho: true
     MinLength: 1
-    Description: "GitLab UI で取得した Runner 登録トークン。"
+    Description: >
+      Runner token used for registration.
+      GitLab 14.2 uses a legacy registration token.
+      Newer GitLab versions can use a runner authentication token (glrt-...).
 
   RunnerDescription:
     Type: String
     Default: "cfn-gitlab-runner"
-    Description: "GitLab の Runners 画面に表示される説明。"
+    Description: "Description shown in GitLab Runners page."
 
   RunnerTags:
     Type: String
     Default: "aws,docker"
-    Description: "この Runner に付与するタグ一覧。カンマ区切りで指定します。"
+    Description: "Comma-separated tag list for this runner."
 
   RunnerConcurrent:
     Type: Number
     Default: 2
     MinValue: 1
-    Description: "この Runner プロセスで同時実行できるジョブ数の上限。"
+    Description: "Max concurrent jobs for this runner process."
 
   RunnerDefaultDockerImage:
     Type: String
     Default: "alpine:latest"
-    Description: ".gitlab-ci.yml で未指定時に使うデフォルトの Docker イメージ。"
-
-  EcrPullRepositoryArns:
-    Type: CommaDelimitedList
-    Default: ""
-    Description: >
-      Runner に pull を許可する ECR repository ARN。カンマ区切りで指定します。
-      空の場合は private ECR の pull 権限を付与しません。
+    Description: "Default docker image when .gitlab-ci.yml does not set one."
 
   EcrDockerRegistries:
     Type: CommaDelimitedList
     Default: ""
     Description: >
-      Docker credential helper を設定する ECR registry host。カンマ区切りで指定します。
-      例: 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com
-      空の場合は docker credential helper を設定しません。
+      Comma-separated ECR registry hosts to configure for docker credential
+      helper (for example 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com).
+      Leave empty to skip docker credential helper setup.
 
   RunnerPrivileged:
     Type: String
     AllowedValues: ["true", "false"]
     Default: "false"
-    Description: "コンテナを privileged モードで実行します。DinD 利用時に必要です。"
+    Description: "Run containers in privileged mode (required for DinD)."
 
   RunnerLocked:
     Type: String
     AllowedValues: ["true", "false"]
     Default: "true"
-    Description: "Runner を現在のプロジェクトにロックします。"
+    Description: "Lock runner to the current project."
 
   RunnerRunUntagged:
     Type: String
     AllowedValues: ["true", "false"]
     Default: "false"
-    Description: "タグなしジョブの実行を許可します。"
+    Description: "Allow running jobs without tags."
 
   # --- Compute ---
   InstanceType:
@@ -115,49 +115,87 @@ Parameters:
       - t3.medium
       - t3.large
       - m6i.large
-    Description: "Runner に使用する EC2 インスタンスタイプ。"
+    Description: "EC2 instance type for the runner."
 
   SpotMaxPrice:
     Type: String
     Default: ""
-    Description: "Spot の上限価格 (USD/時間)。空の場合はオンデマンド価格が上限です。"
+    Description: "Max spot price (USD/hour). Empty = cap at on-demand price."
 
   VolumeSizeGiB:
     Type: Number
     Default: 50
     MinValue: 8
-    Description: "ルート EBS ボリュームのサイズ (GiB)。"
+    Description: "Root EBS volume size in GiB."
+
+  RunnerStateVolumeId:
+    Type: String
+    Default: ""
+    Description: >
+      Existing EBS volume ID for persistent runner state (/etc/gitlab-runner).
+      Leave empty to create a new retained state volume in this stack.
+
+  RunnerStateVolumeSizeGiB:
+    Type: Number
+    Default: 20
+    MinValue: 8
+    Description: >
+      Size of the persistent runner-state EBS volume in GiB when
+      RunnerStateVolumeId is empty.
+
+  RunnerStateVolumeAvailabilityZone:
+    Type: String
+    Default: ""
+    Description: >
+      Availability Zone for a newly created runner-state EBS volume.
+      Leave empty when using make deploy/changeset; the wrapper derives it
+      from SubnetId automatically.
 
   AmiId:
     Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
     Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
-    Description: "最新の AL2023 AMI を解決する SSM Public Parameter。"
+    Description: "SSM public parameter resolving to the latest AL2023 AMI."
+
+  # --- IAM ---
+  IamStackName:
+    Type: String
+    Default: "gitlab-runner-iam"
+    Description: >
+      Name of the IAM stack (gitlab-runner-iam.yaml) that exports the
+      RunnerInstanceProfileArn and optional CacheBucketName.
 
   # --- Access ---
   KeyPairName:
     Type: String
     Default: ""
-    Description: "任意の SSH 用 EC2 KeyPair 名。空の場合は SSM のみで接続します。"
+    Description: "EC2 KeyPair name for optional SSH. Leave empty for SSM-only access."
 
   AllowedSshCidr:
     Type: String
     Default: ""
     Description: >
-      SSH を許可する CIDR (例: 203.0.113.0/32)。
-      ExistingSecurityGroupIds を指定した場合は無視されます。空の場合は SSH ingress を無効化します。
+      CIDR allowed to SSH (e.g. 203.0.113.0/32). Ignored when
+      ExistingSecurityGroupIds is set. Leave empty to disable SSH ingress.
+
+  # --- Observability ---
+  CloudWatchLogsRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 180, 365]
+    Description: "Retention period (days) for CloudWatch Logs."
 
   # --- Storage / cache ---
   CacheBucketName:
     Type: String
     Default: ""
-    Description: "Runner の分散キャッシュに使う既存 S3 バケット名。空の場合は S3 ポリシーを付与しません。"
+    Description: "Existing S3 bucket for runner distributed cache. Empty = no S3 policy."
 
   CacheBucketLocation:
     Type: String
     Default: ""
     Description: >
-      CacheBucketName の AWS リージョン。空の場合はスタックのリージョンを使います。
-      CacheBucketName が空の場合は無視されます。
+      AWS region of CacheBucketName. Empty = use the stack region.
+      Ignored when CacheBucketName is empty.
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -166,6 +204,8 @@ Metadata:
         Parameters: [VpcId, SubnetId, AssignPublicIp]
       - Label: { default: "Security Group" }
         Parameters: [ExistingSecurityGroupIds]
+      - Label: { default: "IAM (deploy gitlab-runner-iam stack first)" }
+        Parameters: [IamStackName]
       - Label: { default: "GitLab Runner" }
         Parameters:
           - GitLabUrl
@@ -174,17 +214,25 @@ Metadata:
           - RunnerTags
           - RunnerConcurrent
           - RunnerDefaultDockerImage
-          - EcrPullRepositoryArns
           - EcrDockerRegistries
           - RunnerPrivileged
           - RunnerLocked
           - RunnerRunUntagged
       - Label: { default: "Compute" }
-        Parameters: [InstanceType, SpotMaxPrice, VolumeSizeGiB, AmiId]
+        Parameters:
+          - InstanceType
+          - SpotMaxPrice
+          - VolumeSizeGiB
+          - RunnerStateVolumeId
+          - RunnerStateVolumeSizeGiB
+          - RunnerStateVolumeAvailabilityZone
+          - AmiId
       - Label: { default: "Access" }
         Parameters: [KeyPairName, AllowedSshCidr]
       - Label: { default: "Cache" }
         Parameters: [CacheBucketName, CacheBucketLocation]
+      - Label: { default: "Observability" }
+        Parameters: [CloudWatchLogsRetentionDays]
 
 # ---------------------------------------------------------------------------
 # Conditions
@@ -199,12 +247,13 @@ Conditions:
     - !Not [!Equals [!Ref KeyPairName, ""]]
     - !Not [!Equals [!Ref AllowedSshCidr, ""]]
 
-  HasCacheBucket: !Not [!Equals [!Ref CacheBucketName, ""]]
+  HasExplicitCacheBucket: !Not [!Equals [!Ref CacheBucketName, ""]]
   HasCacheBucketLocation: !Not [!Equals [!Ref CacheBucketLocation, ""]]
-  HasEcrPullRepositories: !Not [!Equals [!Join ["", !Ref EcrPullRepositoryArns], ""]]
   HasEcrDockerRegistries: !Not [!Equals [!Join ["", !Ref EcrDockerRegistries], ""]]
   HasSpotMaxPrice: !Not [!Equals [!Ref SpotMaxPrice, ""]]
   UseKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
+  HasExistingRunnerStateVolumeId: !Not [!Equals [!Ref RunnerStateVolumeId, ""]]
+  ShouldCreateRunnerStateVolume: !Equals [!Ref RunnerStateVolumeId, ""]
 
   # AssignPublicIp mode switches
   UseSubnetDefault: !Equals [!Ref AssignPublicIp, "SubnetDefault"]
@@ -215,6 +264,13 @@ Conditions:
 # Resources
 # ---------------------------------------------------------------------------
 Resources:
+  # --- CloudWatch Log Group ---
+  RunnerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/${AWS::StackName}/runner"
+      RetentionInDays: !Ref CloudWatchLogsRetentionDays
+
   # --- Security Group (conditional) ---
   RunnerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -225,7 +281,7 @@ Resources:
       SecurityGroupEgress:
         - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
-          Description: "すべての outbound 通信を許可"
+          Description: "Allow all egress"
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-sg"
@@ -239,61 +295,22 @@ Resources:
       FromPort: 22
       ToPort: 22
       CidrIp: !Ref AllowedSshCidr
-      Description: "指定した CIDR からの SSH を許可"
+      Description: "SSH from allowed CIDR"
 
-  # --- IAM ---
-  RunnerRole:
-    Type: AWS::IAM::Role
+  # --- Persistent runner state volume (conditional) ---
+  RunnerStateVolume:
+    Type: AWS::EC2::Volume
+    Condition: ShouldCreateRunnerStateVolume
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal: { Service: ec2.amazonaws.com }
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-      Policies:
-        - !If
-          - HasCacheBucket
-          - PolicyName: runner-cache-bucket
-            PolicyDocument:
-              Version: "2012-10-17"
-              Statement:
-                - Effect: Allow
-                  Action:
-                    - s3:GetObject
-                    - s3:PutObject
-                    - s3:DeleteObject
-                  Resource: !Sub "arn:${AWS::Partition}:s3:::${CacheBucketName}/*"
-                - Effect: Allow
-                  Action:
-                    - s3:ListBucket
-                    - s3:GetBucketLocation
-                  Resource: !Sub "arn:${AWS::Partition}:s3:::${CacheBucketName}"
-          - !Ref AWS::NoValue
-        - !If
-          - HasEcrPullRepositories
-          - PolicyName: runner-ecr-pull
-            PolicyDocument:
-              Version: "2012-10-17"
-              Statement:
-                - Effect: Allow
-                  Action:
-                    - ecr:GetAuthorizationToken
-                  Resource: "*"
-                - Effect: Allow
-                  Action:
-                    - ecr:BatchCheckLayerAvailability
-                    - ecr:BatchGetImage
-                    - ecr:GetDownloadUrlForLayer
-                  Resource: !Ref EcrPullRepositoryArns
-          - !Ref AWS::NoValue
-
-  RunnerInstanceProfile:
-    Type: AWS::IAM::InstanceProfile
-    Properties:
-      Roles: [!Ref RunnerRole]
+      AvailabilityZone: !Ref RunnerStateVolumeAvailabilityZone
+      Size: !Ref RunnerStateVolumeSizeGiB
+      Encrypted: true
+      VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-runner-state"
 
   # --- Launch Template ---
   RunnerLaunchTemplate:
@@ -304,7 +321,9 @@ Resources:
         ImageId: !Ref AmiId
         InstanceType: !Ref InstanceType
         IamInstanceProfile:
-          Arn: !GetAtt RunnerInstanceProfile.Arn
+          Arn:
+            Fn::ImportValue:
+              Fn::Sub: "${IamStackName}-InstanceProfileArn"
         KeyName: !If [UseKeyPair, !Ref KeyPairName, !Ref AWS::NoValue]
         MetadataOptions:
           HttpTokens: required
@@ -362,10 +381,16 @@ Resources:
                 set -euo pipefail
                 exec > >(tee -a /var/log/user-data.log) 2>&1
 
+                _last_err_cmd=""
+                trap '_last_err_cmd="line $LINENO: $BASH_COMMAND"' ERR
+
                 cfn_signal() {
                   local exit_code=$1
-                  echo "[user-data] signaling CloudFormation with exit code $exit_code"
+                  local reason="$_last_err_cmd"
+                  [ -z "$reason" ] && reason="success"
+                  echo "[user-data] signaling CloudFormation exit=$exit_code reason=$reason"
                   /opt/aws/bin/cfn-signal -e "$exit_code" \
+                    --reason "$reason" \
                     --stack ${AWS::StackName} \
                     --resource RunnerInstance \
                     --region ${AWS::Region}
@@ -374,7 +399,7 @@ Resources:
 
                 echo "[user-data] installing packages"
                 dnf -y update
-                dnf -y install docker aws-cfn-bootstrap jq amazon-ecr-credential-helper
+                dnf -y install docker aws-cfn-bootstrap jq amazon-ecr-credential-helper amazon-cloudwatch-agent
                 systemctl enable --now docker
 
                 echo "[user-data] installing gitlab-runner"
@@ -382,12 +407,55 @@ Resources:
                 dnf -y install gitlab-runner
                 usermod -aG docker gitlab-runner
 
-                echo "[user-data] writing base config.toml"
-                install -d -m 0700 /etc/gitlab-runner
-                cat > /etc/gitlab-runner/config.toml <<TOML
+                echo "[user-data] waiting for persistent runner-state volume"
+                ROOT_DEVICE="$(lsblk -no PKNAME "$(findmnt -n -o SOURCE /)" | head -n1)"
+                STATE_DEVICE=""
+                for _ in $(seq 1 60); do
+                  STATE_DEVICE="$(lsblk -ndo NAME,TYPE | awk -v root="$ROOT_DEVICE" '$2=="disk" && $1 != root { print "/dev/" $1; exit }')"
+                  if [ -n "$STATE_DEVICE" ]; then
+                    break
+                  fi
+                  sleep 5
+                done
+                if [ -z "$STATE_DEVICE" ]; then
+                  echo "[user-data] failed to find attached runner-state volume"
+                  exit 1
+                fi
+
+                echo "[user-data] preparing persistent runner-state filesystem on $STATE_DEVICE"
+                install -d -m 0755 /mnt/runner-state
+                if ! blkid "$STATE_DEVICE" >/dev/null 2>&1; then
+                  mkfs.ext4 -L runner-state "$STATE_DEVICE"
+                fi
+                STATE_UUID="$(blkid -s UUID -o value "$STATE_DEVICE")"
+                grep -q " /mnt/runner-state " /etc/fstab || echo "UUID=$STATE_UUID /mnt/runner-state ext4 defaults,nofail 0 2" >> /etc/fstab
+                mountpoint -q /mnt/runner-state || mount /mnt/runner-state
+
+                install -d -m 0700 /mnt/runner-state/etc-gitlab-runner
+                mountpoint -q /etc/gitlab-runner || mount --bind /mnt/runner-state/etc-gitlab-runner /etc/gitlab-runner
+                grep -q " /etc/gitlab-runner " /etc/fstab || echo "/mnt/runner-state/etc-gitlab-runner /etc/gitlab-runner none bind 0 0" >> /etc/fstab
+
+                if [ ! -f /etc/gitlab-runner/config.toml ]; then
+                  echo "[user-data] creating base config.toml"
+                  cat > /etc/gitlab-runner/config.toml <<TOML
                 concurrent = ${RunnerConcurrent}
                 check_interval = 0
                 TOML
+                else
+                  echo "[user-data] reusing existing config.toml"
+                  if grep -q '^concurrent *=.*' /etc/gitlab-runner/config.toml; then
+                    sed -i 's/^concurrent *=.*/concurrent = ${RunnerConcurrent}/' /etc/gitlab-runner/config.toml
+                  else
+                    printf 'concurrent = ${RunnerConcurrent}\n%s' "$(cat /etc/gitlab-runner/config.toml)" > /etc/gitlab-runner/config.toml.tmp
+                    mv /etc/gitlab-runner/config.toml.tmp /etc/gitlab-runner/config.toml
+                  fi
+                  if grep -q '^check_interval *=.*' /etc/gitlab-runner/config.toml; then
+                    sed -i 's/^check_interval *=.*/check_interval = 0/' /etc/gitlab-runner/config.toml
+                  else
+                    printf 'check_interval = 0\n%s' "$(cat /etc/gitlab-runner/config.toml)" > /etc/gitlab-runner/config.toml.tmp
+                    mv /etc/gitlab-runner/config.toml.tmp /etc/gitlab-runner/config.toml
+                  fi
+                fi
                 chmod 0600 /etc/gitlab-runner/config.toml
 
                 echo "[user-data] writing runner registration template"
@@ -399,17 +467,17 @@ Resources:
                     volumes = ["/cache"]
                 TOML
 
-                if [ "${EnableRunnerCache}" = "true" ]; then
+                if [ -n "${ResolvedCacheBucketName}" ]; then
                   cat >> /etc/gitlab-runner/register-template.toml <<TOML
                   [runners.cache]
                     Type = "s3"
                     Path = "gitlab-runner"
                     Shared = true
                     [runners.cache.s3]
-                      BucketName = "${CacheBucketName}"
+                      BucketName = "${ResolvedCacheBucketName}"
                       BucketLocation = "${ResolvedCacheBucketLocation}"
                       AuthenticationType = "iam"
-                  TOML
+                TOML
                 fi
                 chmod 0600 /etc/gitlab-runner/register-template.toml
 
@@ -428,23 +496,66 @@ Resources:
                   chmod 0600 /home/gitlab-runner/.docker/config.json
                 fi
 
-                echo "[user-data] registering runner"
-                gitlab-runner register \
-                  --non-interactive \
-                  --url "${GitLabUrl}" \
-                  --registration-token "${RegistrationToken}" \
-                  --template-config /etc/gitlab-runner/register-template.toml \
-                  --executor "docker" \
-                  --docker-image "${RunnerDefaultDockerImage}" \
-                  --description "${RunnerDescription}" \
-                  --tag-list "${RunnerTags}" \
-                  --locked=${RunnerLocked} \
-                  --run-untagged=${RunnerRunUntagged}
+                if grep -q '^\[\[runners\]\]' /etc/gitlab-runner/config.toml; then
+                  echo "[user-data] existing runner registration found; skipping register"
+                else
+                  if [[ "${RegistrationToken}" == glrt-* ]]; then
+                    echo "[user-data] registering runner with authentication token"
+                    echo "[user-data] runner attributes such as description, tags, locked, and run-untagged must be configured in GitLab UI or API"
+                    gitlab-runner register \
+                      --non-interactive \
+                      --url "${GitLabUrl}" \
+                      --token "${RegistrationToken}" \
+                      --template-config /etc/gitlab-runner/register-template.toml \
+                      --executor "docker" \
+                      --docker-image "${RunnerDefaultDockerImage}"
+                  else
+                    echo "[user-data] registering runner with legacy registration token"
+                    gitlab-runner register \
+                      --non-interactive \
+                      --url "${GitLabUrl}" \
+                      --registration-token "${RegistrationToken}" \
+                      --template-config /etc/gitlab-runner/register-template.toml \
+                      --executor "docker" \
+                      --docker-image "${RunnerDefaultDockerImage}" \
+                      --description "${RunnerDescription}" \
+                      --tag-list "${RunnerTags}" \
+                      --locked=${RunnerLocked} \
+                      --run-untagged=${RunnerRunUntagged}
+                  fi
+                fi
 
                 systemctl enable --now gitlab-runner
+
+                echo "[user-data] configuring cloudwatch agent"
+                cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<CW_EOF
+                {
+                  "logs": {
+                    "logs_collected": {
+                      "files": {
+                        "collect_list": [
+                          {
+                            "file_path": "/var/log/user-data.log",
+                            "log_group_name": "/${AWS::StackName}/runner",
+                            "log_stream_name": "{instance_id}/user-data",
+                            "timezone": "UTC"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+                CW_EOF
+                /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+                  -a fetch-config -m ec2 \
+                  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
               - EnableEcrDockerHelper: !If [HasEcrDockerRegistries, "true", "false"]
-                EnableRunnerCache: !If [HasCacheBucket, "true", "false"]
                 JoinedEcrDockerRegistries: !If [HasEcrDockerRegistries, !Join [",", !Ref EcrDockerRegistries], ""]
+                ResolvedCacheBucketName: !If
+                  - HasExplicitCacheBucket
+                  - !Ref CacheBucketName
+                  - Fn::ImportValue:
+                      Fn::Sub: "${IamStackName}-CacheBucketName"
                 ResolvedCacheBucketLocation: !If [HasCacheBucketLocation, !Ref CacheBucketLocation, !Ref AWS::Region]
 
   # --- EC2 Instance ---
@@ -458,6 +569,12 @@ Resources:
       LaunchTemplate:
         LaunchTemplateId: !Ref RunnerLaunchTemplate
         Version: !GetAtt RunnerLaunchTemplate.LatestVersionNumber
+      Volumes:
+        - Device: /dev/sdf
+          VolumeId: !If
+            - HasExistingRunnerStateVolumeId
+            - !Ref RunnerStateVolumeId
+            - !Ref RunnerStateVolume
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-runner"
@@ -467,35 +584,46 @@ Resources:
 # ---------------------------------------------------------------------------
 Outputs:
   InstanceId:
-    Description: "EC2 インスタンス ID"
+    Description: "EC2 instance ID"
     Value: !Ref RunnerInstance
 
   PrivateIp:
-    Description: "Runner の private IPv4 アドレス"
+    Description: "Private IPv4 of the runner"
     Value: !GetAtt RunnerInstance.PrivateIp
 
   VpcIdUsed:
-    Description: "Runner が使用する VPC"
+    Description: "VPC used by the runner"
     Value: !Ref VpcId
 
   SubnetIdUsed:
-    Description: "Runner が使用する Subnet"
+    Description: "Subnet used by the runner"
     Value: !Ref SubnetId
 
   SecurityGroupIds:
-    Description: "Runner に付与された Security Group ID"
+    Description: "Security Group IDs attached to the runner"
     Value: !If
       - ShouldCreateSecurityGroup
       - !Ref RunnerSecurityGroup
       - !Join [",", !Ref ExistingSecurityGroupIds]
 
   EcrDockerRegistriesConfigured:
-    Description: "Docker credential helper を設定した ECR registry host"
+    Description: "ECR registry hosts configured for docker credential helper"
     Value: !If
       - HasEcrDockerRegistries
       - !Join [",", !Ref EcrDockerRegistries]
       - ""
 
   SsmSessionCommand:
-    Description: "SSM Session Manager シェルを開くための 1 行コマンド"
+    Description: "One-liner to open an SSM Session Manager shell"
     Value: !Sub "aws ssm start-session --region ${AWS::Region} --target ${RunnerInstance}"
+
+  CloudWatchLogGroupName:
+    Description: "CloudWatch Log Group for runner logs"
+    Value: !Ref RunnerLogGroup
+
+  RunnerStateVolumeIdUsed:
+    Description: "Persistent EBS volume ID used for /etc/gitlab-runner"
+    Value: !If
+      - HasExistingRunnerStateVolumeId
+      - !Ref RunnerStateVolumeId
+      - !Ref RunnerStateVolume

@@ -1,0 +1,183 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  IAM Role and Instance Profile for GitLab Runner.
+  Requires CAPABILITY_IAM - deploy once with an administrator who has IAM permissions.
+  The main stack (gitlab-runner.yaml) can then be deployed without IAM permissions.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  CacheBucketName:
+    Type: String
+    Default: ""
+    Description: "Existing S3 bucket for runner distributed cache. Empty = no S3 policy."
+
+  EcrRepositoryArns:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >
+      Comma-separated ECR repository ARNs that the runner may push to and pull from.
+      Leave empty to disable private ECR permissions.
+
+  GitLabOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: >
+      ARN of the GitLab OIDC identity provider in IAM
+      (e.g. arn:aws:iam::123456789012:oidc-provider/gitlab.com).
+      Requires GitLab 15.7 or later (id_tokens keyword).
+      Leave empty to disable OIDC trust.
+
+  GitLabOidcIssuerHost:
+    Type: String
+    Default: "gitlab.com"
+    Description: >
+      Hostname of the GitLab OIDC issuer without the https:// prefix.
+      Used to build the IAM condition key (e.g. "gitlab.com:sub").
+      For self-hosted GitLab use your instance hostname.
+
+  GitLabOidcAudience:
+    Type: String
+    Default: "https://gitlab.com"
+    Description: >
+      Expected aud claim in the GitLab JWT.
+      For self-hosted GitLab use your instance URL without a trailing slash.
+
+  GitLabOidcSubjectClaim:
+    Type: String
+    Default: ""
+    Description: >
+      sub claim pattern (StringLike) to restrict which GitLab projects may assume the role.
+      Example: "project_path:mygroup/myproject:ref_type:branch:ref:main"
+      Wildcards supported: "project_path:mygroup/*:ref_type:branch:ref:*"
+      Leave empty to disable OIDC trust.
+
+# ---------------------------------------------------------------------------
+# Conditions
+# ---------------------------------------------------------------------------
+Conditions:
+  HasCacheBucket:     !Not [!Equals [!Ref CacheBucketName, ""]]
+  HasEcrRepositories: !Not [!Equals [!Join ["", !Ref EcrRepositoryArns], ""]]
+  HasOidcProvider:    !Not [!Equals [!Ref GitLabOidcProviderArn, ""]]
+  HasOidcSubject:     !Not [!Equals [!Ref GitLabOidcSubjectClaim, ""]]
+  EnableOidcTrust:    !And [!Condition HasOidcProvider, !Condition HasOidcSubject]
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+  RunnerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: !If
+        - EnableOidcTrust
+        - !Sub |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": { "Service": "ec2.amazonaws.com" },
+                  "Action": "sts:AssumeRole"
+                },
+                {
+                  "Effect": "Allow",
+                  "Principal": { "Federated": "${GitLabOidcProviderArn}" },
+                  "Action": "sts:AssumeRoleWithWebIdentity",
+                  "Condition": {
+                    "StringEquals": {
+                      "${GitLabOidcIssuerHost}:aud": "${GitLabOidcAudience}"
+                    },
+                    "StringLike": {
+                      "${GitLabOidcIssuerHost}:sub": "${GitLabOidcSubjectClaim}"
+                    }
+                  }
+                }
+              ]
+            }
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal: { Service: ec2.amazonaws.com }
+              Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - !If
+          - HasCacheBucket
+          - PolicyName: runner-cache-bucket
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                    - s3:PutObject
+                    - s3:DeleteObject
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${CacheBucketName}/*"
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                    - s3:GetBucketLocation
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${CacheBucketName}"
+          - !Ref AWS::NoValue
+        - !If
+          - HasEcrRepositories
+          - PolicyName: runner-ecr-push-pull
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - ecr:GetAuthorizationToken
+                  Resource: "*"
+                - Effect: Allow
+                  Action:
+                    - ecr:BatchCheckLayerAvailability
+                    - ecr:BatchGetImage
+                    - ecr:GetDownloadUrlForLayer
+                    - ecr:PutImage
+                    - ecr:InitiateLayerUpload
+                    - ecr:UploadLayerPart
+                    - ecr:CompleteLayerUpload
+                  Resource: !Ref EcrRepositoryArns
+          - !Ref AWS::NoValue
+        - PolicyName: runner-cloudwatch-logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/${AWS::StackName}/*"
+
+  RunnerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref RunnerRole]
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+  RunnerInstanceProfileArn:
+    Description: "ARN of the RunnerInstanceProfile. Imported by gitlab-runner.yaml."
+    Value: !GetAtt RunnerInstanceProfile.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-InstanceProfileArn"
+
+  CacheBucketName:
+    Description: "S3 cache bucket name for the runner. Empty when cache permissions are disabled."
+    Value: !Ref CacheBucketName
+    Export:
+      Name: !Sub "${AWS::StackName}-CacheBucketName"
+
+  RunnerRoleArn:
+    Description: "ARN of the RunnerRole"
+    Value: !GetAtt RunnerRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-RoleArn"

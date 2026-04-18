@@ -161,6 +161,36 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | `CacheBucketName` | - | `""` | 空なら `IamStackName` の IAM スタックが export した `CacheBucketName` を使う。値を指定した場合は export より優先 |
 | `CacheBucketLocation` | - | スタックと同じリージョン | 最終的に使われる `CacheBucketName` のリージョン。キャッシュ未使用時は無視 |
 
+## 作成されるリソース
+
+### IAM スタック (`gitlab-runner-iam.yaml`)
+
+| リソース | タイプ | 作成条件 |
+|---|---|---|
+| `RunnerRole` | `AWS::IAM::Role` | 常に作成 |
+| `RunnerInstanceProfile` | `AWS::IAM::InstanceProfile` | 常に作成 |
+
+`RunnerRole` に付与されるポリシー:
+
+| ポリシー | 内容 | 付与条件 |
+|---|---|---|
+| `AmazonSSMManagedInstanceCore` | SSM Session Manager アクセス | 常に付与 |
+| `runner-cloudwatch-logs` | CloudWatch Logs への書き込み | 常に付与 |
+| `runner-cache-bucket` | S3 キャッシュバケットの読み書き | `CacheBucketName` が非空のとき |
+| `runner-ecr-push-pull` | ECR への push / pull | `EcrRepositoryArns` が非空のとき |
+| OIDC trust（`sts:AssumeRoleWithWebIdentity`） | GitLab CI/CD ジョブからの直接 AssumeRole | `GitLabOidcProviderArn` と `GitLabOidcSubjectClaim` の**両方**が非空のとき |
+
+### メインスタック (`gitlab-runner.yaml`)
+
+| リソース | タイプ | 作成条件 |
+|---|---|---|
+| `RunnerLogGroup` | `AWS::Logs::LogGroup` | 常に作成 |
+| `RunnerLaunchTemplate` | `AWS::EC2::LaunchTemplate` | 常に作成 |
+| `RunnerInstance` | `AWS::EC2::Instance` | 常に作成 |
+| `RunnerSecurityGroup` | `AWS::EC2::SecurityGroup` | `ExistingSecurityGroupIds` が空のとき |
+| `RunnerSshIngress` | `AWS::EC2::SecurityGroupIngress` | `ExistingSecurityGroupIds` が空 かつ `KeyPairName` が非空 かつ `AllowedSshCidr` が非空のとき |
+| `RunnerStateVolume` | `AWS::EC2::Volume` | `RunnerStateVolumeId` が空のとき（`DeletionPolicy: Retain`） |
+
 ## `AssignPublicIp` の挙動
 
 | 値 | 動作 | 想定シナリオ |

@@ -18,9 +18,9 @@
 
   { "ParameterKey": "InstanceType",              "ParameterValue": "t3.small" },
   { "ParameterKey": "SpotMaxPrice",              "ParameterValue": "" },
-  { "ParameterKey": "VolumeSizeGiB",             "ParameterValue": "50" },
+  { "ParameterKey": "VolumeSizeGiB",             "ParameterValue": "30" },
   { "ParameterKey": "RunnerStateVolumeId",       "ParameterValue": "" },
-  { "ParameterKey": "RunnerStateVolumeSizeGiB",  "ParameterValue": "20" },
+  { "ParameterKey": "RunnerStateVolumeSizeGiB",  "ParameterValue": "8" },
   { "ParameterKey": "RunnerStateVolumeAvailabilityZone", "ParameterValue": "" },
 
   { "ParameterKey": "IamStackName",               "ParameterValue": "gitlab-runner-iam" },

@@ -53,6 +53,13 @@ Parameters:
       Wildcards supported: "project_path:mygroup/*:ref_type:branch:ref:*"
       Leave empty to disable OIDC trust.
 
+  RunnerStackName:
+    Type: String
+    Default: "gitlab-runner"
+    Description: >
+      Name of the main runner stack (gitlab-runner.yaml).
+      Used to scope the CloudWatch Logs IAM permission to the correct log group.
+
 # ---------------------------------------------------------------------------
 # Conditions
 # ---------------------------------------------------------------------------
@@ -153,7 +160,7 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                   - logs:DescribeLogStreams
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/${AWS::StackName}/*"
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/${RunnerStackName}/*"
 
   RunnerInstanceProfile:
     Type: AWS::IAM::InstanceProfile

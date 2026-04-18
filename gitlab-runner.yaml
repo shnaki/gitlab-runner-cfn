@@ -124,7 +124,7 @@ Parameters:
 
   VolumeSizeGiB:
     Type: Number
-    Default: 50
+    Default: 30
     MinValue: 8
     Description: "Root EBS volume size in GiB."
 
@@ -137,7 +137,7 @@ Parameters:
 
   RunnerStateVolumeSizeGiB:
     Type: Number
-    Default: 20
+    Default: 8
     MinValue: 8
     Description: >
       Size of the persistent runner-state EBS volume in GiB when
@@ -464,7 +464,7 @@ Resources:
                   [runners.docker]
                     image = "${RunnerDefaultDockerImage}"
                     privileged = ${RunnerPrivileged}
-                    volumes = ["/cache"]
+                    volumes = ["/cache", "/certs/client"]
                 TOML
 
                 if [ -n "${ResolvedCacheBucketName}" ]; then
@@ -527,6 +527,25 @@ Resources:
 
                 systemctl enable --now gitlab-runner
 
+                echo "[user-data] creating gitlab-runner log forwarder service"
+                cat > /etc/systemd/system/gitlab-runner-log-forwarder.service <<UNIT_EOF
+                [Unit]
+                Description=Forward gitlab-runner logs to file for CloudWatch
+                After=gitlab-runner.service
+                BindsTo=gitlab-runner.service
+
+                [Service]
+                ExecStart=/bin/journalctl -u gitlab-runner.service -f --output=short-iso
+                StandardOutput=append:/var/log/gitlab-runner.log
+                Restart=on-failure
+                RestartSec=5
+
+                [Install]
+                WantedBy=multi-user.target
+                UNIT_EOF
+                systemctl daemon-reload
+                systemctl enable --now gitlab-runner-log-forwarder.service
+
                 echo "[user-data] configuring cloudwatch agent"
                 cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<CW_EOF
                 {
@@ -538,6 +557,12 @@ Resources:
                             "file_path": "/var/log/user-data.log",
                             "log_group_name": "/${AWS::StackName}/runner",
                             "log_stream_name": "{instance_id}/user-data",
+                            "timezone": "UTC"
+                          },
+                          {
+                            "file_path": "/var/log/gitlab-runner.log",
+                            "log_group_name": "/${AWS::StackName}/runner",
+                            "log_stream_name": "{instance_id}/gitlab-runner",
                             "timezone": "UTC"
                           }
                         ]

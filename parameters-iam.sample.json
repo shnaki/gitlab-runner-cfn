@@ -4,5 +4,6 @@
   { "ParameterKey": "GitLabOidcProviderArn",  "ParameterValue": "" },
   { "ParameterKey": "GitLabOidcIssuerHost",   "ParameterValue": "gitlab.com" },
   { "ParameterKey": "GitLabOidcAudience",     "ParameterValue": "https://gitlab.com" },
-  { "ParameterKey": "GitLabOidcSubjectClaim", "ParameterValue": "" }
+  { "ParameterKey": "GitLabOidcSubjectClaim", "ParameterValue": "" },
+  { "ParameterKey": "RunnerStackName",        "ParameterValue": "gitlab-runner" }
 ]

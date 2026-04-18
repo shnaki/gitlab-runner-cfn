@@ -144,9 +144,9 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | `RunnerRunUntagged` | - | `false` | legacy registration token 利用時のみ有効。authentication token 利用時は GitLab UI/API 側で管理 |
 | `InstanceType` | - | `t3.small` | `t3.nano` / `t3.micro` / `t3.small` / `t3.medium` / `t3.large` / `m6i.large` |
 | `SpotMaxPrice` | - | `""` | Spot 最大価格 USD/時。空ならオンデマンド価格上限 |
-| `VolumeSizeGiB` | - | `50` | ルート EBS サイズ |
+| `VolumeSizeGiB` | - | `30` | ルート EBS サイズ |
 | `RunnerStateVolumeId` | - | `""` | `/etc/gitlab-runner` を保持する既存 EBS volume ID。空なら retained な state volume を新規作成 |
-| `RunnerStateVolumeSizeGiB` | - | `20` | `RunnerStateVolumeId` が空のときに作成する state volume のサイズ |
+| `RunnerStateVolumeSizeGiB` | - | `8` | `RunnerStateVolumeId` が空のときに作成する state volume のサイズ |
 | `RunnerStateVolumeAvailabilityZone` | - | `""` | 新規 state volume の AZ。通常は `make deploy` / `make changeset` が `SubnetId` から自動補完する |
 | `AmiId` | - | AL2023 の SSM Public Parameter | 上書き可 |
 | `IamStackName` | - | `gitlab-runner-iam` | `RunnerInstanceProfileArn` と既定の `CacheBucketName` を export している IAM スタック名（同一アカウント・同一リージョン前提） |

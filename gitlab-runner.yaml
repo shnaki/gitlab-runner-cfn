@@ -464,7 +464,7 @@ Resources:
                   [runners.docker]
                     image = "${RunnerDefaultDockerImage}"
                     privileged = ${RunnerPrivileged}
-                    volumes = ["/cache"]
+                    volumes = ["/cache", "/certs/client"]
                 TOML
 
                 if [ -n "${ResolvedCacheBucketName}" ]; then

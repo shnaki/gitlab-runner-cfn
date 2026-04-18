@@ -114,6 +114,7 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 - GitLab 14.2 での AWS 認証方針、Runner の使い分け、`.gitlab-ci.yml` の運用例、OIDC の制約は [docs/gitlab-14-2-aws-auth.md](docs/gitlab-14-2-aws-auth.md) を参照。
 - EC2 起動時に UserData スクリプトが実行する処理の一覧は [docs/userdata-steps.md](docs/userdata-steps.md) を参照。
 - `scripts/cfn-deploy.sh` の引数・モード・AZ 自動補完・エラー処理の仕様は [docs/cfn-deploy.md](docs/cfn-deploy.md) を参照。
+- AWS マネジメントコンソールから手動でデプロイする手順は [docs/console-deploy.md](docs/console-deploy.md) を参照。
 
 ## IAM スタックのパラメータ一覧
 
@@ -364,3 +365,4 @@ sudo cat /etc/gitlab-runner/config.toml
 - `scripts/cfn-deploy.sh` — JSON パラメータを安全に扱う create/update/change-set ラッパー
 - `docs/gitlab-14-2-aws-auth.md` — GitLab 14.2 での AWS 認証方針、Runner の使い分け、`.gitlab-ci.yml` 運用例
 - `docs/cfn-deploy.md` — `cfn-deploy.sh` の引数・モード・AZ 自動補完・エラー処理の仕様
+- `docs/console-deploy.md` — AWS マネジメントコンソールからの手動デプロイ手順

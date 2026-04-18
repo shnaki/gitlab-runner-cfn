@@ -112,6 +112,9 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 
 - この README は **Runner 構築者向け**。CloudFormation スタックの前提、デプロイ、パラメータ、運用保守だけを扱う。
 - GitLab 14.2 での AWS 認証方針、Runner の使い分け、`.gitlab-ci.yml` の運用例、OIDC の制約は [docs/gitlab-14-2-aws-auth.md](docs/gitlab-14-2-aws-auth.md) を参照。
+- EC2 起動時に UserData スクリプトが実行する処理の一覧は [docs/userdata-steps.md](docs/userdata-steps.md) を参照。
+- `scripts/cfn-deploy.sh` の引数・モード・AZ 自動補完・エラー処理の仕様は [docs/cfn-deploy.md](docs/cfn-deploy.md) を参照。
+- AWS マネジメントコンソールから手動でデプロイする手順は [docs/console-deploy.md](docs/console-deploy.md) を参照。
 
 ## IAM スタックのパラメータ一覧
 
@@ -121,6 +124,11 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 |---|---|---|---|
 | `CacheBucketName` | - | `""` | Runner 分散キャッシュ用 S3 バケット名。空なら S3 権限なし |
 | `EcrRepositoryArns` | - | `""` | 既存 private ECR repository への push / pull を許可する repository ARN または ARN パターン（カンマ区切り）。空なら ECR 権限なし |
+| `GitLabOidcProviderArn` | - | `""` | IAM に登録済みの GitLab OIDC プロバイダ ARN（例: `arn:aws:iam::123456789012:oidc-provider/gitlab.com`）。GitLab 15.7+ の `id_tokens` キーワードが必須。`GitLabOidcSubjectClaim` と両方を設定した場合のみ OIDC trust が有効になる |
+| `GitLabOidcIssuerHost` | - | `gitlab.com` | OIDC issuer のホスト名（`https://` なし）。gitlab.com を使う場合は変更不要。セルフホスト GitLab の場合はインスタンスのホスト名を指定 |
+| `GitLabOidcAudience` | - | `https://gitlab.com` | GitLab JWT の `aud` クレーム。gitlab.com を使う場合は変更不要。セルフホストの場合はインスタンス URL（末尾スラッシュなし） |
+| `GitLabOidcSubjectClaim` | - | `""` | ロールを引き受けられるプロジェクトを制限する `sub` クレームパターン（StringLike、ワイルドカード可）。例: `project_path:mygroup/*:ref_type:branch:ref:*`。`GitLabOidcProviderArn` と両方を設定した場合のみ OIDC trust が有効になる |
+| `RunnerStackName` | - | `gitlab-runner` | メインスタック (`gitlab-runner.yaml`) の名前。IAM ポリシーの CloudWatch Logs 権限スコープ（ロググループ名）の解決に使用する |
 
 ## メインスタックのパラメータ一覧
 
@@ -155,6 +163,36 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | `CloudWatchLogsRetentionDays` | - | `30` | CloudWatch Logs の保持日数 |
 | `CacheBucketName` | - | `""` | 空なら `IamStackName` の IAM スタックが export した `CacheBucketName` を使う。値を指定した場合は export より優先 |
 | `CacheBucketLocation` | - | スタックと同じリージョン | 最終的に使われる `CacheBucketName` のリージョン。キャッシュ未使用時は無視 |
+
+## 作成されるリソース
+
+### IAM スタック (`gitlab-runner-iam.yaml`)
+
+| リソース | タイプ | 作成条件 |
+|---|---|---|
+| `RunnerRole` | `AWS::IAM::Role` | 常に作成 |
+| `RunnerInstanceProfile` | `AWS::IAM::InstanceProfile` | 常に作成 |
+
+`RunnerRole` に付与されるポリシー:
+
+| ポリシー | 内容 | 付与条件 |
+|---|---|---|
+| `AmazonSSMManagedInstanceCore` | SSM Session Manager アクセス | 常に付与 |
+| `runner-cloudwatch-logs` | CloudWatch Logs への書き込み | 常に付与 |
+| `runner-cache-bucket` | S3 キャッシュバケットの読み書き | `CacheBucketName` が非空のとき |
+| `runner-ecr-push-pull` | ECR への push / pull | `EcrRepositoryArns` が非空のとき |
+| OIDC trust（`sts:AssumeRoleWithWebIdentity`） | GitLab CI/CD ジョブからの直接 AssumeRole | `GitLabOidcProviderArn` と `GitLabOidcSubjectClaim` の**両方**が非空のとき |
+
+### メインスタック (`gitlab-runner.yaml`)
+
+| リソース | タイプ | 作成条件 |
+|---|---|---|
+| `RunnerLogGroup` | `AWS::Logs::LogGroup` | 常に作成 |
+| `RunnerLaunchTemplate` | `AWS::EC2::LaunchTemplate` | 常に作成 |
+| `RunnerInstance` | `AWS::EC2::Instance` | 常に作成 |
+| `RunnerSecurityGroup` | `AWS::EC2::SecurityGroup` | `ExistingSecurityGroupIds` が空のとき |
+| `RunnerSshIngress` | `AWS::EC2::SecurityGroupIngress` | `ExistingSecurityGroupIds` が空 かつ `KeyPairName` が非空 かつ `AllowedSshCidr` が非空のとき |
+| `RunnerStateVolume` | `AWS::EC2::Volume` | `RunnerStateVolumeId` が空のとき（`DeletionPolicy: Retain`） |
 
 ## `AssignPublicIp` の挙動
 
@@ -326,3 +364,5 @@ sudo cat /etc/gitlab-runner/config.toml
 - `Makefile` — `validate` / `deploy` / `changeset` / `outputs` / `session` / `delete` および各 `-iam` バリアント
 - `scripts/cfn-deploy.sh` — JSON パラメータを安全に扱う create/update/change-set ラッパー
 - `docs/gitlab-14-2-aws-auth.md` — GitLab 14.2 での AWS 認証方針、Runner の使い分け、`.gitlab-ci.yml` 運用例
+- `docs/cfn-deploy.md` — `cfn-deploy.sh` の引数・モード・AZ 自動補完・エラー処理の仕様
+- `docs/console-deploy.md` — AWS マネジメントコンソールからの手動デプロイ手順

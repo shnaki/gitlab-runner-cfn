@@ -564,7 +564,8 @@ Resources:
                             "file_path": "/var/log/gitlab-runner.log",
                             "log_group_name": "/${AWS::StackName}/runner",
                             "log_stream_name": "{instance_id}/gitlab-runner",
-                            "timezone": "UTC"
+                            "timezone": "UTC",
+                            "initial_position": "beginning"
                           }
                         ]
                       }

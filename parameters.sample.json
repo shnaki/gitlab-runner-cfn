@@ -28,5 +28,6 @@
   { "ParameterKey": "KeyPairName",               "ParameterValue": "" },
   { "ParameterKey": "AllowedSshCidr",            "ParameterValue": "" },
 
-  { "ParameterKey": "CacheBucketLocation",       "ParameterValue": "" }
+  { "ParameterKey": "CacheBucketLocation",       "ParameterValue": "" },
+  { "ParameterKey": "CachePathPrefix",           "ParameterValue": "" }
 ]

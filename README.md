@@ -306,7 +306,7 @@ IAM スタックの `CacheBucketName` を指定すると、Runner 登録時に S
 - メインスタックで `CacheBucketName` を明示した場合は、その値が IAM 側 export より優先される
 - IAM スタックの `CacheBucketName` は S3 権限付与にも使用する
 - `CacheBucketLocation` は最終的に使われる `CacheBucketName` に対して適用され、省略時はスタックのリージョンを使う
-- cache の prefix は `gitlab-runner` 固定
+- `CachePathPrefix` で cache の prefix を変更可能（デフォルト: `gitlab-runner`）。同一バケットを複数スタックで共有する場合はスタックごとに変えること
 - バケット側には Runner ロールに対する `s3:GetObject` / `s3:PutObject` / `s3:DeleteObject` / `s3:ListBucket` が必要
 
 メインスタックは `RunnerInstanceProfileArn` も IAM スタックの export から取得するため、通常は `parameters.json` に ARN を手入力する必要はない。

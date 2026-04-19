@@ -197,6 +197,13 @@ Parameters:
       AWS region of CacheBucketName. Empty = use the stack region.
       Ignored when CacheBucketName is empty.
 
+  CachePathPrefix:
+    Type: String
+    Default: "gitlab-runner"
+    Description: >
+      S3 cache path prefix (runners.cache.Path).
+      Defaults to "gitlab-runner". Change when sharing a bucket across multiple stacks.
+
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -471,7 +478,7 @@ Resources:
                   cat >> /etc/gitlab-runner/register-template.toml <<TOML
                   [runners.cache]
                     Type = "s3"
-                    Path = "gitlab-runner"
+                    Path = "${ResolvedCachePathPrefix}"
                     Shared = true
                     [runners.cache.s3]
                       BucketName = "${ResolvedCacheBucketName}"
@@ -582,6 +589,7 @@ Resources:
                   - Fn::ImportValue:
                       Fn::Sub: "${IamStackName}-CacheBucketName"
                 ResolvedCacheBucketLocation: !If [HasCacheBucketLocation, !Ref CacheBucketLocation, !Ref AWS::Region]
+                ResolvedCachePathPrefix: !Ref CachePathPrefix
 
   # --- EC2 Instance ---
   RunnerInstance:

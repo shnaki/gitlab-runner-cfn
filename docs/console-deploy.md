@@ -120,6 +120,7 @@ OIDC を使用しない場合、`GitLabOidcProviderArn`・`GitLabOidcSubjectClai
 | `IamStackName` | × | `gitlab-runner-iam` | IAM スタック名。ステップ 1 で作成したスタック名と一致させる |
 | `CacheBucketName` | × | `my-runner-cache` | S3 キャッシュバケット名。空欄でキャッシュなし |
 | `CacheBucketLocation` | × | `ap-northeast-1` | S3 バケットのリージョン。空欄でスタックと同じリージョン |
+| `CachePathPrefix` | × | `gitlab-runner` | S3 キャッシュの prefix。空欄でデフォルト値 `gitlab-runner` |
 | `CloudWatchLogsRetentionDays` | × | `30` | CloudWatch Logs の保持期間（日） |
 
 ### RunnerStateVolumeAvailabilityZone の手動入力

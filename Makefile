@@ -48,10 +48,10 @@ validate-iam: ## Validate the IAM CloudFormation template
 		--template-body file://$(IAM_TEMPLATE) $(AWSFLAGS)
 
 deploy-iam: $(IAM_PARAMS) ## Deploy or update the IAM stack (requires IAM permissions)
-	$(BASH) -c "CFN_CAPABILITIES=CAPABILITY_IAM $(BASH) scripts/cfn-deploy.sh deploy $(IAM_STACK_NAME) $(REGION) $(IAM_TEMPLATE) $(IAM_PARAMS)"
+	$(BASH) -c "CFN_CAPABILITIES=CAPABILITY_NAMED_IAM $(BASH) scripts/cfn-deploy.sh deploy $(IAM_STACK_NAME) $(REGION) $(IAM_TEMPLATE) $(IAM_PARAMS)"
 
 changeset-iam: $(IAM_PARAMS) ## Create a change set for the IAM stack (dry-run)
-	$(BASH) -c "CFN_CAPABILITIES=CAPABILITY_IAM $(BASH) scripts/cfn-deploy.sh changeset $(IAM_STACK_NAME) $(REGION) $(IAM_TEMPLATE) $(IAM_PARAMS) $(IAM_STACK_NAME)-preview"
+	$(BASH) -c "CFN_CAPABILITIES=CAPABILITY_NAMED_IAM $(BASH) scripts/cfn-deploy.sh changeset $(IAM_STACK_NAME) $(REGION) $(IAM_TEMPLATE) $(IAM_PARAMS) $(IAM_STACK_NAME)-preview"
 
 delete-iam: ## Delete the IAM stack
 	$(AWS) cloudformation delete-stack --stack-name $(IAM_STACK_NAME) $(AWSFLAGS)

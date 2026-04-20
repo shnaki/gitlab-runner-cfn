@@ -17,7 +17,6 @@
   { "ParameterKey": "RunnerRunUntagged",         "ParameterValue": "false" },
 
   { "ParameterKey": "InstanceType",              "ParameterValue": "t3.small" },
-  { "ParameterKey": "SpotMaxPrice",              "ParameterValue": "" },
   { "ParameterKey": "VolumeSizeGiB",             "ParameterValue": "30" },
   { "ParameterKey": "RunnerStateVolumeId",       "ParameterValue": "" },
   { "ParameterKey": "RunnerStateVolumeSizeGiB",  "ParameterValue": "8" },
@@ -29,5 +28,12 @@
   { "ParameterKey": "AllowedSshCidr",            "ParameterValue": "" },
 
   { "ParameterKey": "CacheBucketLocation",       "ParameterValue": "" },
-  { "ParameterKey": "CachePathPrefix",           "ParameterValue": "" }
+  { "ParameterKey": "CachePathPrefix",           "ParameterValue": "" },
+
+  { "ParameterKey": "ScheduleEnabled",           "ParameterValue": "false" },
+  { "ParameterKey": "ScheduleTimezone",          "ParameterValue": "Asia/Tokyo" },
+  { "ParameterKey": "BusinessHoursStartHour",    "ParameterValue": "9" },
+  { "ParameterKey": "BusinessHoursStartMinute",  "ParameterValue": "0" },
+  { "ParameterKey": "BusinessHoursStopHour",     "ParameterValue": "18" },
+  { "ParameterKey": "BusinessHoursStopMinute",   "ParameterValue": "0" }
 ]

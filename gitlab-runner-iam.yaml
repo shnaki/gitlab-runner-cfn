@@ -167,6 +167,31 @@ Resources:
     Properties:
       Roles: [!Ref RunnerRole]
 
+  SchedulerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${RunnerStackName}-scheduler"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: start-stop-runner
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:StartInstances
+                  - ec2:StopInstances
+                Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                Condition:
+                  StringEquals:
+                    "ec2:ResourceTag/aws:cloudformation:stack-name": !Ref RunnerStackName
+
 # ---------------------------------------------------------------------------
 # Outputs
 # ---------------------------------------------------------------------------
@@ -188,3 +213,9 @@ Outputs:
     Value: !GetAtt RunnerRole.Arn
     Export:
       Name: !Sub "${AWS::StackName}-RoleArn"
+
+  SchedulerExecutionRoleArn:
+    Description: "ARN of the SchedulerExecutionRole for EventBridge Scheduler. Imported by gitlab-runner.yaml."
+    Value: !GetAtt SchedulerExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-SchedulerExecutionRoleArn"

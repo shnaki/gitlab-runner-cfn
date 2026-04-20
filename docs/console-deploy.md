@@ -106,7 +106,6 @@ OIDC を使用しない場合、`GitLabOidcProviderArn`・`GitLabOidcSubjectClai
 | パラメータ名 | 必須 | 入力例 | 説明 |
 |---|---|---|---|
 | `InstanceType` | × | `t3.small` | EC2 インスタンスタイプ |
-| `SpotMaxPrice` | × | `0.05` | Spot 最大価格（USD/時）。空欄でオンデマンド価格上限 |
 | `VolumeSizeGiB` | × | `30` | ルート EBS ボリュームサイズ（GiB） |
 | `KeyPairName` | × | `my-keypair` | SSH 接続用 EC2 キーペア名。空欄で SSM のみ |
 | `RunnerStateVolumeId` | × | `vol-0a1b2c3d4e5f67890` | 既存 EBS ボリューム ID（`/etc/gitlab-runner` 永続化用）。空欄で新規作成 |
@@ -122,6 +121,17 @@ OIDC を使用しない場合、`GitLabOidcProviderArn`・`GitLabOidcSubjectClai
 | `CacheBucketLocation` | × | `ap-northeast-1` | S3 バケットのリージョン。空欄でスタックと同じリージョン |
 | `CachePathPrefix` | × | `gitlab-runner` | S3 キャッシュの prefix。空欄でデフォルト値 `gitlab-runner` |
 | `CloudWatchLogsRetentionDays` | × | `30` | CloudWatch Logs の保持期間（日） |
+
+#### スケジューリング
+
+| パラメータ名 | 必須 | 入力例 | 説明 |
+|---|---|---|---|
+| `ScheduleEnabled` | × | `false` | `true` にすると平日営業時間スケジュールを有効化 |
+| `ScheduleTimezone` | × | `Asia/Tokyo` | スケジュールのタイムゾーン（IANA 形式） |
+| `BusinessHoursStartHour` | × | `9` | 起動時刻の「時」（0〜23） |
+| `BusinessHoursStartMinute` | × | `0` | 起動時刻の「分」（0〜59） |
+| `BusinessHoursStopHour` | × | `18` | 停止時刻の「時」（0〜23） |
+| `BusinessHoursStopMinute` | × | `0` | 停止時刻の「分」（0〜59） |
 
 ### RunnerStateVolumeAvailabilityZone の手動入力
 

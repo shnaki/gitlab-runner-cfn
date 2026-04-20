@@ -312,7 +312,7 @@ Resources:
   RunnerLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "/${AWS::StackName}/runner"
+      LogGroupName: !Sub "/${AWS::StackName}"
       RetentionInDays: !Ref CloudWatchLogsRetentionDays
 
   # --- Security Group (conditional) ---
@@ -354,7 +354,7 @@ Resources:
       VolumeType: gp3
       Tags:
         - Key: Name
-          Value: !Sub "${AWS::StackName}-runner-state"
+          Value: !Sub "${AWS::StackName}-server-state"
 
   # --- Launch Template ---
   RunnerLaunchTemplate:
@@ -406,11 +406,11 @@ Resources:
           - ResourceType: instance
             Tags:
               - Key: Name
-                Value: !Sub "${AWS::StackName}-runner"
+                Value: !Sub "${AWS::StackName}-server"
           - ResourceType: volume
             Tags:
               - Key: Name
-                Value: !Sub "${AWS::StackName}-runner-volume"
+                Value: !Sub "${AWS::StackName}-server-volume"
         UserData:
           Fn::Base64:
             !Sub
@@ -641,7 +641,7 @@ Resources:
             - !Ref RunnerStateVolume
       Tags:
         - Key: Name
-          Value: !Sub "${AWS::StackName}-runner"
+          Value: !Sub "${AWS::StackName}-server"
 
   # --- EventBridge Scheduler (business hours) ---
   RunnerStartSchedule:

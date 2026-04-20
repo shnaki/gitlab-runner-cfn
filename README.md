@@ -358,11 +358,11 @@ Runner の以下ログが自動的に CloudWatch Logs に送信される:
 - `/var/log/user-data.log` → `{InstanceId}/user-data`
 - `gitlab-runner.service` (journald) → `{InstanceId}/gitlab-runner`
 
-ログは `/${StackName}/runner` ロググループに収集される。保持日数は `CloudWatchLogsRetentionDays` で制御（デフォルト 30 日）。
+ログは `/${StackName}` ロググループに収集される。保持日数は `CloudWatchLogsRetentionDays` で制御（デフォルト 30 日）。
 
 ```bash
 # ログの確認（AWS Console の CloudWatch Logs を使うか CLI で）
-aws logs tail /gitlab-runner/runner --follow --region ap-northeast-1
+aws logs tail /gitlab-runner --follow --region ap-northeast-1
 ```
 
 ## セキュリティ上の注意

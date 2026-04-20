@@ -1,5 +1,23 @@
 # マネジメントコンソールからの手動デプロイ
 
+## Quick-Create Link で楽をする
+
+`parameters.json` / `parameters-iam.json` を編集済みであれば、`make quick-create-link` で各パラメータが事前入力された CloudFormation コンソール URL を生成できる。
+URL をブラウザで開くと「スタックの作成（レビュー）」画面が開き、テンプレートのアップロードやパラメータ入力の大半を省略できる。
+
+```bash
+# テンプレートを事前に S3 にアップロードしておく
+aws s3 cp gitlab-runner-iam.yaml s3://YOUR_BUCKET/
+aws s3 cp gitlab-runner.yaml s3://YOUR_BUCKET/
+
+make quick-create-link TEMPLATE_S3_BUCKET=YOUR_BUCKET
+```
+
+- `RegistrationToken` は NoEcho のため URL から除外される。コンソール上で手入力すること。
+- IAM スタックの確認画面では「IAM リソース作成の承認」チェックボックスへのチェックが必要（CAPABILITY_NAMED_IAM）。
+
+---
+
 ## 前提
 
 - AWS マネジメントコンソールへログイン済みであること

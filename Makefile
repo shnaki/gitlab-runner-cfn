@@ -8,6 +8,10 @@ IAM_STACK_NAME ?= gitlab-runner-iam
 IAM_TEMPLATE   ?= gitlab-runner-iam.yaml
 IAM_PARAMS     ?= parameters-iam.json
 
+TEMPLATE_S3_BUCKET ?=
+TEMPLATE_S3_PREFIX ?=
+FORMAT             ?= text
+
 AWS        ?= aws
 AWSFLAGS    = --region $(REGION) --no-cli-pager
 BASH       ?= bash
@@ -16,7 +20,8 @@ POWERSHELL ?= powershell -NoProfile
 .DEFAULT_GOAL := help
 
 .PHONY: help validate deploy delete outputs session changeset \
-        deploy-iam changeset-iam delete-iam outputs-iam validate-iam
+        deploy-iam changeset-iam delete-iam outputs-iam validate-iam \
+        quick-create-link
 
 help: ## Show this help
 	@$(POWERSHELL) -Command "$$lines = Get-Content '$(firstword $(MAKEFILE_LIST))'; Write-Host 'Usage:'; Write-Host '  make <target>'; Write-Host ''; Write-Host 'Targets:'; foreach ($$line in $$lines) { if ($$line -match '^([a-zA-Z_-]+):.*##\s*(.+)$$') { '{0,-12} {1}' -f $$matches[1], $$matches[2] } }"
@@ -61,6 +66,21 @@ outputs-iam: ## Print IAM stack outputs (RunnerInstanceProfileArn etc.)
 	$(AWS) cloudformation describe-stacks \
 		--stack-name $(IAM_STACK_NAME) $(AWSFLAGS) \
 		--query 'Stacks[0].Outputs' --output table
+
+quick-create-link: $(PARAMS) $(IAM_PARAMS) ## Generate CloudFormation Quick-Create links from parameter files
+	@if [ -z "$(TEMPLATE_S3_BUCKET)" ]; then \
+	  echo "ERROR: TEMPLATE_S3_BUCKET is required. Upload templates to S3 first, then set TEMPLATE_S3_BUCKET." >&2; exit 1; fi
+	go run ./cmd/quick-create-link \
+	  -region $(REGION) \
+	  -s3-bucket $(TEMPLATE_S3_BUCKET) \
+	  -s3-prefix "$(TEMPLATE_S3_PREFIX)" \
+	  -stack-name $(STACK_NAME) \
+	  -iam-stack-name $(IAM_STACK_NAME) \
+	  -template $(TEMPLATE) \
+	  -iam-template $(IAM_TEMPLATE) \
+	  -params $(PARAMS) \
+	  -iam-params $(IAM_PARAMS) \
+	  -format $(FORMAT)
 
 $(PARAMS):
 	@echo "ERROR: $(PARAMS) not found. Copy parameters.sample.json to $(PARAMS) and edit it." >&2

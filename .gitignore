@@ -2,6 +2,12 @@
 parameters.json
 parameters-iam.json
 
+# Go binaries
+/quick-create-link
+/quick-create-link.exe
+/cmd/quick-create-link/quick-create-link
+/cmd/quick-create-link/quick-create-link.exe
+
 # IntelliJ project files
 .idea
 *.iml

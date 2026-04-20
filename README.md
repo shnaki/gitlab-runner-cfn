@@ -1,6 +1,6 @@
 # gitlab-runner-cfn
 
-セルフホスト GitLab に接続する **GitLab Runner (Docker executor)** を、AWS 上で **Spot EC2 1 台** として立ち上げる CloudFormation テンプレート。
+セルフホスト GitLab に接続する **GitLab Runner (Docker executor)** を、AWS 上で **オンデマンド EC2 1 台** として立ち上げる CloudFormation テンプレート。営業時間外の自動停止オプション付き。
 
 **前提環境**: 既存 VPC へのデプロイに特化。プライベートサブネット（NAT Gateway）・パブリックサブネット（IGW + `AssignPublicIp=Yes`）の両構成をサポート。
 
@@ -14,7 +14,7 @@
                  │                                      │
                  │   ┌── private subnet ─────────┐      │
   self-hosted    │   │                           │      │
-  GitLab  ◄──────┼───┤  EC2 (Spot, AL2023)       │      │
+  GitLab  ◄──────┼───┤  EC2 (on-demand, AL2023)       │      │
                  │   │   - docker                │      │
                  │   │   - gitlab-runner         │      │
                  │   │   - IAM: SSM + opt S3/ECR │      │
@@ -37,7 +37,7 @@
                  │                                      │
                  │   ┌── public subnet ──────────┐      │
   self-hosted    │   │                           │      │
-  GitLab  ◄──────┼───┤  EC2 (Spot, AL2023)       │      │
+  GitLab  ◄──────┼───┤  EC2 (on-demand, AL2023)       │      │
                  │   │   - docker                │      │
                  │   │   - gitlab-runner         │      │
                  │   │   - IAM: SSM + opt S3/ECR │      │
@@ -52,8 +52,9 @@
                       CloudWatch Logs
 ```
 
-- EC2 は常時 1 台（Spot）。中断されると ASG なしのため再作成は手動（または `make delete` → `make deploy`）。
+- EC2 は常時 1 台（オンデマンド）。
 - `RunnerStateVolumeId` を使うと、`/etc/gitlab-runner` を永続 EBS に退避して同じ runner 登録を引き継げる。未指定時は retained な state volume を新規作成する。
+- `ScheduleEnabled=true` で平日営業時間のみ自動起動・自動停止するスケジュールを有効化できる。
 - **VPC / Subnet は既存を渡す前提**。Private subnet（NAT GW 経由 outbound）と public subnet（IGW + `AssignPublicIp=Yes`）の両方に対応。
 - Security Group は **既存利用** と **新規作成** を切替可能。セルフホスト GitLab 側で固定 SG をホワイトリスト登録しているケースでは、Runner スタックを作り直しても SG ID が変わらないように **外部管理の SG を渡す** 運用を推奨。
 - Public IP の付与は `AssignPublicIp` で制御（デフォルト `No`）。
@@ -151,7 +152,6 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | `RunnerLocked` | - | `true` | legacy registration token 利用時のみ有効。authentication token 利用時は GitLab UI/API 側で管理 |
 | `RunnerRunUntagged` | - | `false` | legacy registration token 利用時のみ有効。authentication token 利用時は GitLab UI/API 側で管理 |
 | `InstanceType` | - | `t3.small` | `t3.nano` / `t3.micro` / `t3.small` / `t3.medium` / `t3.large` / `m6i.large` |
-| `SpotMaxPrice` | - | `""` | Spot 最大価格 USD/時。空ならオンデマンド価格上限 |
 | `VolumeSizeGiB` | - | `30` | ルート EBS サイズ |
 | `RunnerStateVolumeId` | - | `""` | `/etc/gitlab-runner` を保持する既存 EBS volume ID。空なら retained な state volume を新規作成 |
 | `RunnerStateVolumeSizeGiB` | - | `8` | `RunnerStateVolumeId` が空のときに作成する state volume のサイズ |
@@ -163,6 +163,12 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | `CloudWatchLogsRetentionDays` | - | `30` | CloudWatch Logs の保持日数 |
 | `CacheBucketName` | - | `""` | 空なら `IamStackName` の IAM スタックが export した `CacheBucketName` を使う。値を指定した場合は export より優先 |
 | `CacheBucketLocation` | - | スタックと同じリージョン | 最終的に使われる `CacheBucketName` のリージョン。キャッシュ未使用時は無視 |
+| `ScheduleEnabled` | - | `false` | `true` にすると平日営業時間スケジュールを有効化 |
+| `ScheduleTimezone` | - | `Asia/Tokyo` | スケジュールのタイムゾーン（IANA 形式） |
+| `BusinessHoursStartHour` | - | `9` | インスタンス起動時刻の「時」（0〜23） |
+| `BusinessHoursStartMinute` | - | `0` | インスタンス起動時刻の「分」（0〜59） |
+| `BusinessHoursStopHour` | - | `18` | インスタンス停止時刻の「時」（0〜23） |
+| `BusinessHoursStopMinute` | - | `0` | インスタンス停止時刻の「分」（0〜59） |
 
 ## 作成されるリソース
 
@@ -172,6 +178,7 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 |---|---|---|
 | `RunnerRole` | `AWS::IAM::Role` | 常に作成 |
 | `RunnerInstanceProfile` | `AWS::IAM::InstanceProfile` | 常に作成 |
+| `SchedulerExecutionRole` | `AWS::IAM::Role` | 常に作成（スケジューリング未使用時も作成されるが無害） |
 
 `RunnerRole` に付与されるポリシー:
 
@@ -182,6 +189,7 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | `runner-cache-bucket` | S3 キャッシュバケットの読み書き | `CacheBucketName` が非空のとき |
 | `runner-ecr-push-pull` | ECR への push / pull | `EcrRepositoryArns` が非空のとき |
 | OIDC trust（`sts:AssumeRoleWithWebIdentity`） | GitLab CI/CD ジョブからの直接 AssumeRole | `GitLabOidcProviderArn` と `GitLabOidcSubjectClaim` の**両方**が非空のとき |
+| `runner-scheduler`（`SchedulerExecutionRole`） | EventBridge Scheduler が EC2 を起動・停止 | 常に作成。`ec2:StartInstances`/`ec2:StopInstances` をスタック名タグで対象インスタンスに限定 |
 
 ### メインスタック (`gitlab-runner.yaml`)
 
@@ -193,6 +201,8 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 | `RunnerSecurityGroup` | `AWS::EC2::SecurityGroup` | `ExistingSecurityGroupIds` が空のとき |
 | `RunnerSshIngress` | `AWS::EC2::SecurityGroupIngress` | `ExistingSecurityGroupIds` が空 かつ `KeyPairName` が非空 かつ `AllowedSshCidr` が非空のとき |
 | `RunnerStateVolume` | `AWS::EC2::Volume` | `RunnerStateVolumeId` が空のとき（`DeletionPolicy: Retain`） |
+| `RunnerStartSchedule` | `AWS::Scheduler::Schedule` | `ScheduleEnabled=true` のとき |
+| `RunnerStopSchedule` | `AWS::Scheduler::Schedule` | `ScheduleEnabled=true` のとき |
 
 ## `AssignPublicIp` の挙動
 
@@ -247,7 +257,7 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 
 1. 初回デプロイでは `RunnerStateVolumeId` を空にする
 2. `make outputs` で `RunnerStateVolumeIdUsed` を控える
-3. Spot 中断や `make delete` 後に再作成するときは、その volume ID を `RunnerStateVolumeId` に設定して再デプロイする
+3. `make delete` 後に再作成するときは、その volume ID を `RunnerStateVolumeId` に設定して再デプロイする
 
 ### 注意点
 
@@ -255,6 +265,36 @@ make delete-iam  # IAM スタック（メインスタック削除後）
 - `make` を使わずに CloudFormation を直接叩く場合は、新規 state volume 用に `RunnerStateVolumeAvailabilityZone` も明示する
 - EBS volume は EC2 と同じ Availability Zone にしかアタッチできない。別 AZ の subnet に切り替える場合は同じ volume を再利用できない
 - `RunnerConcurrent` は起動時に既存 `config.toml` のトップレベル設定を更新するが、runner 自体の登録情報は保持される
+
+## 営業時間スケジューリング
+
+`ScheduleEnabled=true` を設定すると、EventBridge Scheduler が平日の指定時刻に EC2 を自動起動・停止する。
+
+### 設定例
+
+`parameters.json`:
+
+```json
+{ "ParameterKey": "ScheduleEnabled",          "ParameterValue": "true" },
+{ "ParameterKey": "ScheduleTimezone",         "ParameterValue": "Asia/Tokyo" },
+{ "ParameterKey": "BusinessHoursStartHour",   "ParameterValue": "7" },
+{ "ParameterKey": "BusinessHoursStartMinute", "ParameterValue": "45" },
+{ "ParameterKey": "BusinessHoursStopHour",    "ParameterValue": "18" },
+{ "ParameterKey": "BusinessHoursStopMinute",  "ParameterValue": "30" }
+```
+
+この設定で月〜金の 7:45 起動 / 18:30 停止となる（土日は対象外）。
+
+### 動作の仕様
+
+- `ScheduleEnabled=false`（デフォルト）: スケジューラリソース非作成。常時稼働。
+- スケジュールによる停止中でも EC2 コンソールや CLI から手動起動できる。次の停止スケジュールまで稼働し続ける。
+- インスタンス起動時、`gitlab-runner.service` は systemd により自動起動する。
+
+### 注意
+
+- スケジューラ IAM ロールは IAM スタック (`gitlab-runner-iam.yaml`) で管理される。`ScheduleEnabled` の変更だけならメインスタックの更新のみでよい。
+- IAM スタックを更新する場合は `make deploy-iam` を使う（`CAPABILITY_NAMED_IAM` が必要）。
 
 ## Security Group モード
 
@@ -329,7 +369,6 @@ aws logs tail /gitlab-runner/runner --follow --region ap-northeast-1
 
 - **Registration token は UserData に埋め込まれる**。`ec2:DescribeInstanceAttribute` 権限を持つ者は取得可能。
 - **Registration token 方式は GitLab 16.6 以降で非推奨**。長期運用では、GitLab UI で事前に取得する **Runner Authentication Token** + SSM Parameter Store への移行を推奨。
-- **Spot 中断時にジョブは中断される**。本テンプレートは単一 EC2 のため自動復旧しない。
 - **runner state volume には `/etc/gitlab-runner/config.toml` が残る**。再利用時は runner token を含む設定を引き継ぐため、不要になった volume は適切に破棄すること。
 - EBS は暗号化（gp3）。IMDS は v2 強制。
 - `EcrRepositoryArns` は既存 private ECR repository への権限付与に使う。repository 自体は通常 push 前に AWS 側で事前作成しておくこと。

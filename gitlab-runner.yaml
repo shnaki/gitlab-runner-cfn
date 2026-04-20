@@ -1,9 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  GitLab Runner (Docker executor) on a single Spot EC2 instance.
+  GitLab Runner (Docker executor) on a single on-demand EC2 instance.
   Targets an existing VPC/Subnet. Supports both private subnets (NAT Gateway)
   and public subnets (Internet Gateway with AssignPublicIp=Yes).
   Security Group can be either created here or reused from outside.
+  Optional business-hours schedule via EventBridge Scheduler.
 
 # ---------------------------------------------------------------------------
 # Parameters
@@ -117,11 +118,6 @@ Parameters:
       - m6i.large
     Description: "EC2 instance type for the runner."
 
-  SpotMaxPrice:
-    Type: String
-    Default: ""
-    Description: "Max spot price (USD/hour). Empty = cap at on-demand price."
-
   VolumeSizeGiB:
     Type: Number
     Default: 30
@@ -155,6 +151,46 @@ Parameters:
     Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
     Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
     Description: "SSM public parameter resolving to the latest AL2023 AMI."
+
+  # --- Scheduling ---
+  ScheduleEnabled:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: "Start/stop the runner on a business-hours schedule (weekdays only)."
+
+  ScheduleTimezone:
+    Type: String
+    Default: "Asia/Tokyo"
+    Description: "IANA timezone for the schedule (e.g. Asia/Tokyo, UTC)."
+
+  BusinessHoursStartHour:
+    Type: Number
+    Default: 9
+    MinValue: 0
+    MaxValue: 23
+    Description: "Hour (0-23) to start the instance on weekdays."
+
+  BusinessHoursStartMinute:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 59
+    Description: "Minute (0-59) to start the instance on weekdays."
+
+  BusinessHoursStopHour:
+    Type: Number
+    Default: 18
+    MinValue: 0
+    MaxValue: 23
+    Description: "Hour (0-23) to stop the instance on weekdays."
+
+  BusinessHoursStopMinute:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 59
+    Description: "Minute (0-59) to stop the instance on weekdays."
 
   # --- IAM ---
   IamStackName:
@@ -228,7 +264,6 @@ Metadata:
       - Label: { default: "Compute" }
         Parameters:
           - InstanceType
-          - SpotMaxPrice
           - VolumeSizeGiB
           - RunnerStateVolumeId
           - RunnerStateVolumeSizeGiB
@@ -238,6 +273,8 @@ Metadata:
         Parameters: [KeyPairName, AllowedSshCidr]
       - Label: { default: "Cache" }
         Parameters: [CacheBucketName, CacheBucketLocation]
+      - Label: { default: "Scheduling" }
+        Parameters: [ScheduleEnabled, ScheduleTimezone, BusinessHoursStartHour, BusinessHoursStartMinute, BusinessHoursStopHour, BusinessHoursStopMinute]
       - Label: { default: "Observability" }
         Parameters: [CloudWatchLogsRetentionDays]
 
@@ -257,7 +294,7 @@ Conditions:
   HasExplicitCacheBucket: !Not [!Equals [!Ref CacheBucketName, ""]]
   HasCacheBucketLocation: !Not [!Equals [!Ref CacheBucketLocation, ""]]
   HasEcrDockerRegistries: !Not [!Equals [!Join ["", !Ref EcrDockerRegistries], ""]]
-  HasSpotMaxPrice: !Not [!Equals [!Ref SpotMaxPrice, ""]]
+  EnableSchedule: !Equals [!Ref ScheduleEnabled, "true"]
   UseKeyPair: !Not [!Equals [!Ref KeyPairName, ""]]
   HasExistingRunnerStateVolumeId: !Not [!Equals [!Ref RunnerStateVolumeId, ""]]
   ShouldCreateRunnerStateVolume: !Equals [!Ref RunnerStateVolumeId, ""]
@@ -342,12 +379,6 @@ Resources:
               VolumeType: gp3
               DeleteOnTermination: true
               Encrypted: true
-        InstanceMarketOptions:
-          MarketType: spot
-          SpotOptions:
-            SpotInstanceType: one-time
-            MaxPrice: !If [HasSpotMaxPrice, !Ref SpotMaxPrice, !Ref AWS::NoValue]
-
         # When AssignPublicIp=SubnetDefault, use top-level SubnetId + SecurityGroupIds
         # so the subnet's MapPublicIpOnLaunch takes effect.
         SubnetId: !If [UseSubnetDefault, !Ref SubnetId, !Ref AWS::NoValue]
@@ -611,6 +642,37 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-runner"
+
+  # --- EventBridge Scheduler (business hours) ---
+  RunnerStartSchedule:
+    Type: AWS::Scheduler::Schedule
+    Condition: EnableSchedule
+    Properties:
+      Name: !Sub "${AWS::StackName}-start"
+      ScheduleExpression: !Sub "cron(${BusinessHoursStartMinute} ${BusinessHoursStartHour} ? * MON-FRI *)"
+      ScheduleExpressionTimezone: !Ref ScheduleTimezone
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        Arn: "arn:aws:scheduler:::aws-sdk:ec2:startInstances"
+        RoleArn:
+          Fn::ImportValue: !Sub "${IamStackName}-SchedulerExecutionRoleArn"
+        Input: !Sub '{"InstanceIds":["${RunnerInstance}"]}'
+
+  RunnerStopSchedule:
+    Type: AWS::Scheduler::Schedule
+    Condition: EnableSchedule
+    Properties:
+      Name: !Sub "${AWS::StackName}-stop"
+      ScheduleExpression: !Sub "cron(${BusinessHoursStopMinute} ${BusinessHoursStopHour} ? * MON-FRI *)"
+      ScheduleExpressionTimezone: !Ref ScheduleTimezone
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        Arn: "arn:aws:scheduler:::aws-sdk:ec2:stopInstances"
+        RoleArn:
+          Fn::ImportValue: !Sub "${IamStackName}-SchedulerExecutionRoleArn"
+        Input: !Sub '{"InstanceIds":["${RunnerInstance}"]}'
 
 # ---------------------------------------------------------------------------
 # Outputs

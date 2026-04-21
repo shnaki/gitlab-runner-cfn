@@ -146,6 +146,72 @@ build:
 - `ecr:BatchGetImage`
 - `ecr:GetDownloadUrlForLayer`
 
+## ジョブ内 AssumeRole（権限分離・クロスアカウント）
+
+CI ジョブ内で `aws sts assume-role` を呼び、別ロールに切り替えたい場合（例: 本番アカウントへのデプロイ、最小権限の専用ロールへの絞り込み）に使う構成。
+
+> デプロイ担当者がローカルで AssumeRole してから `make deploy` を実行する手順は [`docs/assume-role.md`](./assume-role.md) を参照。ここで扱うのは **CI ジョブ内での** AssumeRole。
+
+### Runner 側（IAM スタック）の設定
+
+IAM スタックの `AssumableRoleArns` に、ジョブが引き受けてよいロール ARN を渡す。
+
+```json
+{ "ParameterKey": "AssumableRoleArns", "ParameterValue": "arn:aws:iam::111111111111:role/my-deploy-role" }
+```
+
+複数ロールを許可する場合はカンマ区切りで列挙する。
+
+```json
+{ "ParameterKey": "AssumableRoleArns", "ParameterValue": "arn:aws:iam::111111111111:role/nonprod-deploy,arn:aws:iam::222222222222:role/prod-deploy" }
+```
+
+`AssumableRoleArns` が空（デフォルト）のときは `sts:AssumeRole` 権限は付与されない。
+
+### ターゲット側ロールの trust policy
+
+引き受け先のロールに、Runner の IAM ロール ARN を principal として許可する trust policy が必要。  
+Runner ロールの ARN は IAM スタックの Output `<IamStackName>-RoleArn` から取得できる。
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::000000000000:role/gitlab-runner-iam-RunnerRole-XXXXXXXXXXXX"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+```
+
+クロスアカウントの場合は、ターゲット側アカウントにこの trust policy を持つロールを作成する。  
+Runner 側の `AssumableRoleArns` にそのロールの ARN を指定するだけで、他の変更は不要。
+
+### `.gitlab-ci.yml` の例
+
+```yaml
+deploy-prod:
+  tags:
+    - prod
+    - deploy
+  script:
+    - |
+      CREDS=$(aws sts assume-role \
+        --role-arn arn:aws:iam::222222222222:role/prod-deploy \
+        --role-session-name gitlab-job-$CI_JOB_ID)
+      export AWS_ACCESS_KEY_ID=$(echo "$CREDS"     | jq -r '.Credentials.AccessKeyId')
+      export AWS_SECRET_ACCESS_KEY=$(echo "$CREDS" | jq -r '.Credentials.SecretAccessKey')
+      export AWS_SESSION_TOKEN=$(echo "$CREDS"     | jq -r '.Credentials.SessionToken')
+    - aws sts get-caller-identity
+    - aws ecs update-service --cluster my-prod-cluster --service my-app --force-new-deployment
+```
+
+AssumeRole 後に `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN` を呼べば Runner ロールに戻る。
+
 ## DinD を使う場合
 
 `docker build` や `docker push` をジョブ内で行うなら、対応する Runner 側で `RunnerPrivileged=true` が必要。  

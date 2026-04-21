@@ -147,6 +147,7 @@ make quick-create-link TEMPLATE_S3_BUCKET=YOUR_BUCKET FORMAT=markdown
 | 名前 | 必須 | デフォルト | 説明 |
 |---|---|---|---|
 | `CacheBucketName` | - | `""` | Runner 分散キャッシュ用 S3 バケット名。空なら S3 権限なし |
+| `AssumableRoleArns` | - | `""` | CI ジョブが `aws sts assume-role` で引き受けてよい IAM ロール ARN（カンマ区切り）。空なら AssumeRole 権限なし |
 | `EcrRepositoryArns` | - | `""` | 既存 private ECR repository への push / pull を許可する repository ARN または ARN パターン（カンマ区切り）。空なら ECR 権限なし |
 | `GitLabOidcProviderArn` | - | `""` | IAM に登録済みの GitLab OIDC プロバイダ ARN（例: `arn:aws:iam::123456789012:oidc-provider/gitlab.com`）。GitLab 15.7+ の `id_tokens` キーワードが必須。`GitLabOidcSubjectClaim` と両方を設定した場合のみ OIDC trust が有効になる |
 | `GitLabOidcIssuerHost` | - | `gitlab.com` | OIDC issuer のホスト名（`https://` なし）。gitlab.com を使う場合は変更不要。セルフホスト GitLab の場合はインスタンスのホスト名を指定 |
@@ -210,6 +211,7 @@ make quick-create-link TEMPLATE_S3_BUCKET=YOUR_BUCKET FORMAT=markdown
 | `AmazonSSMManagedInstanceCore` | SSM Session Manager アクセス | 常に付与 |
 | `runner-cloudwatch-logs` | CloudWatch Logs への書き込み | 常に付与 |
 | `runner-cache-bucket` | S3 キャッシュバケットの読み書き | `CacheBucketName` が非空のとき |
+| `runner-assume-role` | 指定ロールへの `sts:AssumeRole` | `AssumableRoleArns` が非空のとき |
 | `runner-ecr-push-pull` | ECR への push / pull | `EcrRepositoryArns` が非空のとき |
 | OIDC trust（`sts:AssumeRoleWithWebIdentity`） | GitLab CI/CD ジョブからの直接 AssumeRole | `GitLabOidcProviderArn` と `GitLabOidcSubjectClaim` の**両方**が非空のとき |
 | `runner-scheduler`（`SchedulerExecutionRole`） | EventBridge Scheduler が EC2 を起動・停止 | 常に作成。`ec2:StartInstances`/`ec2:StopInstances` をスタック名タグで対象インスタンスに限定 |

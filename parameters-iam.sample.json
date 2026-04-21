@@ -1,5 +1,6 @@
 [
   { "ParameterKey": "CacheBucketName",        "ParameterValue": "" },
+  { "ParameterKey": "AssumableRoleArns",      "ParameterValue": "" },
   { "ParameterKey": "EcrRepositoryArns",      "ParameterValue": "" },
   { "ParameterKey": "GitLabOidcProviderArn",  "ParameterValue": "" },
   { "ParameterKey": "GitLabOidcIssuerHost",   "ParameterValue": "gitlab.com" },

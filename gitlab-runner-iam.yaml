@@ -13,6 +13,13 @@ Parameters:
     Default: ""
     Description: "Existing S3 bucket for runner distributed cache. Empty = no S3 policy."
 
+  AssumableRoleArns:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: >
+      Comma-separated IAM role ARNs that CI jobs may assume via sts:AssumeRole.
+      Leave empty to disable AssumeRole permissions.
+
   EcrRepositoryArns:
     Type: CommaDelimitedList
     Default: ""
@@ -64,8 +71,9 @@ Parameters:
 # Conditions
 # ---------------------------------------------------------------------------
 Conditions:
-  HasCacheBucket:     !Not [!Equals [!Ref CacheBucketName, ""]]
-  HasEcrRepositories: !Not [!Equals [!Join ["", !Ref EcrRepositoryArns], ""]]
+  HasCacheBucket:       !Not [!Equals [!Ref CacheBucketName, ""]]
+  HasAssumableRoles:    !Not [!Equals [!Join ["", !Ref AssumableRoleArns], ""]]
+  HasEcrRepositories:   !Not [!Equals [!Join ["", !Ref EcrRepositoryArns], ""]]
   HasOidcProvider:    !Not [!Equals [!Ref GitLabOidcProviderArn, ""]]
   HasOidcSubject:     !Not [!Equals [!Ref GitLabOidcSubjectClaim, ""]]
   EnableOidcTrust:    !And [!Condition HasOidcProvider, !Condition HasOidcSubject]
@@ -111,6 +119,18 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Policies:
+        - !If
+          - HasAssumableRoles
+          - PolicyName: runner-assume-role
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - sts:AssumeRole
+                    - sts:TagSession
+                  Resource: !Ref AssumableRoleArns
+          - !Ref AWS::NoValue
         - !If
           - HasCacheBucket
           - PolicyName: runner-cache-bucket

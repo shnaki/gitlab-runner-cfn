@@ -115,8 +115,8 @@ CloudWatch Agent がファイルを読んで転送するための中継ログフ
 
 | ログファイル | CloudWatch ロググループ | ストリーム名 |
 |---|---|---|
-| `/var/log/user-data.log` | `/<スタック名>` | `<instance-id>/user-data` |
-| `/var/log/gitlab-runner.log` | `/<スタック名>` | `<instance-id>/gitlab-runner` |
+| `/var/log/user-data.log` | `/<スタック名>/server` | `<instance-id>/user-data` |
+| `/var/log/gitlab-runner.log` | `/<スタック名>/server` | `<instance-id>/gitlab-runner` |
 
 ## 12. CloudFormation への成否通知
 

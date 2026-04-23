@@ -312,7 +312,7 @@ Resources:
   RunnerLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "/${AWS::StackName}"
+      LogGroupName: !Sub "/${AWS::StackName}/server"
       RetentionInDays: !Ref CloudWatchLogsRetentionDays
 
   # --- Security Group (conditional) ---
@@ -593,13 +593,13 @@ Resources:
                         "collect_list": [
                           {
                             "file_path": "/var/log/user-data.log",
-                            "log_group_name": "/${AWS::StackName}/runner",
+                            "log_group_name": "/${AWS::StackName}/server",
                             "log_stream_name": "{instance_id}/user-data",
                             "timezone": "UTC"
                           },
                           {
                             "file_path": "/var/log/gitlab-runner.log",
-                            "log_group_name": "/${AWS::StackName}/runner",
+                            "log_group_name": "/${AWS::StackName}/server",
                             "log_stream_name": "{instance_id}/gitlab-runner",
                             "timezone": "UTC"
                           }
